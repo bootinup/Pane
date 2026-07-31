@@ -8,7 +8,7 @@ import type { Unicode11Addon } from '@xterm/addon-unicode11';
 import { useSession } from '../../contexts/SessionContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { TerminalPanelProps } from '../../types/panelComponents';
-import { useHotkeyStore } from '../../stores/hotkeyStore';
+import { isHotkeyEnabledForEvent, useHotkeyStore } from '../../stores/hotkeyStore';
 import { renderLog, devLog } from '../../utils/console';
 import { getTerminalTheme } from '../../utils/terminalTheme';
 import { resolveTerminalKeyHandling } from '../../utils/terminalKeyHandling';
@@ -878,6 +878,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           const terminalKeyDecision = resolveTerminalKeyHandling(e, {
             isTuiActive: tuiActiveRef.current,
             isCliPanel: isCliPanelRef.current,
+            isMac: isMac(),
           });
 
           // Shift+Enter sends the same ESC+CR sequence as Alt+Enter for CLI
@@ -890,6 +891,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
             return false;
           }
           if (terminalKeyDecision.action === 'block') return false;
+          if (terminalKeyDecision.action === 'release-to-app') {
+            return !isHotkeyEnabledForEvent(e);
+          }
           if (terminalKeyDecision.action === 'pass-through') return true;
 
           // Ctrl/Cmd+1-9: switch sessions
