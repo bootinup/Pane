@@ -1,10 +1,13 @@
 import { ToolPanel, SessionPanelLayout } from '../../../shared/types/panels';
+import { AgentState } from '../../../shared/types/agentStatus';
 
 export interface PanelStore {
   // State (using plain objects instead of Maps for React reactivity)
   panels: Record<string, ToolPanel[]>;        // sessionId -> panels
   activePanels: Record<string, string>;       // sessionId -> active panelId
   activityStatus: Record<string, 'active' | 'idle'>; // panelId -> status
+  agentStatus: Record<string, AgentState>;    // panelId -> detected agent state (blocked/working/idle)
+  agentStatusSession: Record<string, string>; // panelId -> sessionId (so status rolls up without panels loaded)
   lastActivityAt: Record<string, string>;     // panelId -> last PTY output timestamp
   unviewedCompletedActivity: Record<string, string>; // sessionId -> completion timestamp
 
@@ -20,6 +23,8 @@ export interface PanelStore {
   updatePanelState: (panel: ToolPanel) => void;
   setActivityStatus: (panelId: string, status: 'active' | 'idle', lastActivityAt?: string) => void;
   clearActivityStatus: (panelId: string) => void;
+  setAgentStatus: (panelId: string, sessionId: string, state: AgentState) => void;
+  clearAgentStatus: (panelId: string) => void;
   markUnviewedCompletedActivity: (sessionId: string, completedAt?: string) => void;
   clearUnviewedCompletedActivity: (sessionId: string) => void;
 
@@ -32,6 +37,8 @@ export interface PanelStore {
   getActivePanel: (sessionId: string) => ToolPanel | undefined;
   getPanelActivityStatus: (panelId: string) => 'active' | 'idle';
   getSessionActivityStatus: (sessionId: string) => 'active' | 'idle';
+  getPanelAgentState: (panelId: string) => AgentState | undefined;
+  getSessionAgentState: (sessionId: string) => AgentState;
   hasUnviewedCompletedActivity: (sessionId: string) => boolean;
   getLayout: (sessionId: string) => SessionPanelLayout | undefined;
   getFocusedGroupId: (sessionId: string) => string | undefined;

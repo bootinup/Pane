@@ -25,6 +25,7 @@ import type {
   PanePermissionResponse,
 } from '../../../shared/types/daemon';
 import type { ToolPanel } from '../../../shared/types/panels';
+import type { PanelAgentStatusEvent } from '../../../shared/types/agentStatus';
 import type { PaneChatAgent, PaneChatState } from '../../../shared/types/paneChat';
 import type { CreateSessionRequest } from './session';
 import type { DetectedProjectConfig } from '../../../shared/types/projectConfig';
@@ -344,6 +345,7 @@ interface ElectronAPI {
     onPanelUpdated: (callback: (panel: ToolPanel) => void) => () => void;
     onPanelDeleted: (callback: (data: { panelId: string; sessionId: string }) => void) => () => void;
     onPanelActivityStatus: (callback: (data: { panelId: string; sessionId: string; status: 'active' | 'idle'; lastActivityAt?: string }) => void) => () => void;
+    onPanelAgentStatus: (callback: (data: PanelAgentStatusEvent) => void) => () => void;
     onPanelPromptAdded: (callback: (data: { panelId: string; content: string }) => void) => () => void;
     onPanelResponseAdded: (callback: (data: { panelId: string; content: string }) => void) => () => void;
     

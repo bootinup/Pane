@@ -16,7 +16,10 @@ import { Dropdown } from './ui/Dropdown';
 import type { DropdownItem } from './ui/Dropdown';
 import { useSessionStore } from '../stores/sessionStore';
 import { useNavigationStore } from '../stores/navigationStore';
-import { usePanelStore } from '../stores/panelStore';
+import { SessionStatusBadge } from './SessionStatusBadge';
+import { AgentStatusDot } from './ui/AgentStatusDot';
+import { useSessionAgentDisplayStatus } from '../hooks/useAgentStatus';
+import { PANE_CHAT_SESSION_ID } from '../../../shared/types/paneChat';
 import { API } from '../utils/api';
 import type { Project } from '../types/project';
 import { useSessionNavigationHotkeys } from '../hooks/useSessionNavigationHotkeys';
@@ -326,8 +329,6 @@ export function Sidebar({ onAboutClick, onSettingsClick, onRemoteSettingsClick, 
   const sessions = useSessionStore((state) => state.sessions);
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
   const setActiveSession = useSessionStore((state) => state.setActiveSession);
-  const activityStatus = usePanelStore(s => s.activityStatus);
-  const panelsBySession = usePanelStore(s => s.panels);
   const remoteFooterStatus = useMemo(
     () => getRemoteFooterStatus(remoteConnectionState, remoteHostState),
     [remoteConnectionState, remoteHostState],
@@ -352,6 +353,7 @@ export function Sidebar({ onAboutClick, onSettingsClick, onRemoteSettingsClick, 
   const activeView = useNavigationStore((state) => state.activeView);
   const navigateToProject = useNavigationStore((state) => state.navigateToProject);
   const navigateToPaneChat = useNavigationStore((state) => state.navigateToPaneChat);
+  const paneChatStatus = useSessionAgentDisplayStatus(PANE_CHAT_SESSION_ID);
   const setSidebarNavigationScope = useNavigationStore((state) => state.setSidebarNavigationScope);
   useSessionNavigationHotkeys({ projects, sessionSortAscending });
 
@@ -421,13 +423,14 @@ export function Sidebar({ onAboutClick, onSettingsClick, onRemoteSettingsClick, 
                   navigateToPaneChat();
                 }}
                 aria-label="Pane Chat"
-                className={`w-8 h-8 rounded flex items-center justify-center transition-colors ${
+                className={`relative w-8 h-8 rounded flex items-center justify-center transition-colors ${
                   activeView === 'pane-chat'
                     ? 'bg-interactive/20 text-interactive ring-1 ring-interactive/50'
                     : 'text-text-tertiary hover:bg-surface-hover hover:text-text-primary'
                 }`}
               >
                 <MessageSquare className="w-4 h-4" />
+                <AgentStatusDot status={paneChatStatus} size="sm" className="absolute -top-0.5 -right-0.5" />
               </button>
             </Tooltip>
             {showRemoteDesktopLink && (
@@ -464,10 +467,6 @@ export function Sidebar({ onAboutClick, onSettingsClick, onRemoteSettingsClick, 
                   {/* Session status badges — grouped under this project */}
                   {projectSessions.map((session) => {
                     const isActive = session.id === activeSessionId;
-                    const sessionPanels = panelsBySession[session.id] || [];
-                    const isSessionActive = sessionPanels.some(p => activityStatus[p.id] === 'active');
-                    const statusColor = isSessionActive ? 'bg-status-warning opacity-100 duration-150' : 'bg-text-muted/20 opacity-40 duration-[3s]';
-                    const isAnimated = isSessionActive;
                     return (
                       <Tooltip key={session.id} content={<SessionDetailTooltip session={session} />} side="right">
                         <button
@@ -479,12 +478,9 @@ export function Sidebar({ onAboutClick, onSettingsClick, onRemoteSettingsClick, 
                             isActive ? 'bg-interactive/20 ring-1 ring-interactive/50' : 'hover:bg-surface-hover'
                           }`}
                         >
-                          {/**
-                           * Session status badge — currently renders as a colored dot.
-                           * TODO: Evolve into richer interactive badges with session identity
-                           * (e.g., initials, mini name) and better click-to-navigate affordance.
-                           */}
-                          <div className={`w-2.5 h-2.5 rounded-full transition-all ${statusColor} ${isAnimated ? 'animate-pulse' : ''}`} />
+                          {/* At-a-glance agent status (blocked / working / done), with a
+                              binary activity fallback for non-agent sessions. */}
+                          <SessionStatusBadge sessionId={session.id} />
                         </button>
                       </Tooltip>
                     );

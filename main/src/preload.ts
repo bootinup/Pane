@@ -18,6 +18,7 @@ import type {
   RemotePaneConnectionProfile,
 } from '../../shared/types/remoteDaemon';
 import type { ToolPanel } from '../../shared/types/panels';
+import type { PanelAgentStatusEvent } from '../../shared/types/agentStatus';
 
 interface LogEntry {
   timestamp: string;
@@ -838,6 +839,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const wrappedCallback = (_event: Electron.IpcRendererEvent, data: { panelId: string; sessionId: string; status: 'active' | 'idle'; lastActivityAt?: string }) => callback(data);
       ipcRenderer.on('panel:activityStatus', wrappedCallback);
       return () => ipcRenderer.removeListener('panel:activityStatus', wrappedCallback);
+    },
+    onPanelAgentStatus: (callback: (data: PanelAgentStatusEvent) => void) => {
+      const wrappedCallback = (_event: Electron.IpcRendererEvent, data: PanelAgentStatusEvent) => callback(data);
+      ipcRenderer.on('panel:agentStatus', wrappedCallback);
+      return () => ipcRenderer.removeListener('panel:agentStatus', wrappedCallback);
     },
     
     // Folder events

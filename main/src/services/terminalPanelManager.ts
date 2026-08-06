@@ -18,6 +18,10 @@ import {
   onPtyBytes as flowControlOnPtyBytes,
 } from '../ptyHost/flowControl';
 import { TerminalStateEmulator } from './terminalStateEmulator';
+import { AgentStatusMonitor } from './agentStatus/agentStatusMonitor';
+import { detectAgentState } from './agentStatus/manifestEngine';
+import { getManifestForAgent } from './agentStatus/manifests';
+import type { AgentState, PanelAgentStatusEvent } from '../../../shared/types/agentStatus';
 
 const OUTPUT_BATCH_INTERVAL = 32; // ms (~30fps) — wider window reduces TUI flicker
 const OUTPUT_BATCH_INTERVAL_HIDDEN = 250; // ms — background / hidden cadence to cut IPC wake-up cost
@@ -25,6 +29,7 @@ const OUTPUT_BATCH_SIZE = 131072; // 128KB — timer-based flush preferred; size
 const OUTPUT_BATCH_SIZE_HIDDEN = 80_000; // 80KB — cap hidden flush size to avoid foreground backpressure churn
 const MAX_CONCURRENT_SPAWNS = 3;
 const IDLE_THRESHOLD_MS = 30_000; // 30s — mark panel idle after no PTY output
+const AGENT_STATUS_POLL_MS = 500; // cadence for re-deriving blocked/working/done from the live screen
 const MAX_SCROLLBACK_BUFFER_SIZE = 500_000; // 500KB of normal shell history
 const MAX_ALTERNATE_SCREEN_BUFFER_SIZE = 100_000; // 100KB of recent TUI redraw state
 const MIN_PTY_COLS = 20;
@@ -198,6 +203,8 @@ interface TerminalProcess {
   isAlternateScreen: boolean;
   activityStatus: 'active' | 'idle';
   idleTimer: ReturnType<typeof setTimeout> | null;
+  /** CLI agent driving this panel, when any — selects the status-detection manifest. */
+  agentType?: CliAgentType;
   // DEC Mode 2026 synchronized-output block tracking — persists across chunks
   inSyncBlock: boolean;
   codexAgentSessionId?: string;
@@ -215,10 +222,21 @@ export class TerminalPanelManager {
   private activeSpawns = 0;
   private spawnQueue: Array<{ resolve: () => void; priority: number }> = [];
 
+  // At-a-glance agent status (blocked/working/done) for AI/CLI panels.
+  private readonly agentStatusMonitor = new AgentStatusMonitor();
+  private agentStatusPollTimer: ReturnType<typeof setInterval> | null = null;
+  private agentStatusPolling = false;
+
+  /**
+   * Detect the CLI agent from a launch command. Matches "claude"/"codex" as a
+   * standalone token (start/space/slash-delimited), not a substring — a command
+   * whose cwd or script path merely contains the word (e.g. /tmp/claude-501/x.sh)
+   * must not be classified as that agent.
+   */
   private getCliAgentType(command?: string): CliAgentType | undefined {
     const lower = command?.toLowerCase() ?? '';
-    if (lower.includes('claude')) return 'claude';
-    if (lower.includes('codex')) return 'codex';
+    if (/(^|[\s/])claude($|\s)/.test(lower)) return 'claude';
+    if (/(^|[\s/])codex($|\s)/.test(lower)) return 'codex';
     return undefined;
   }
 
@@ -968,11 +986,15 @@ export class TerminalPanelManager {
       activityStatus: 'idle',
       idleTimer: null,
       inSyncBlock: false,
+      agentType: this.resolveTerminalAgentType(panel.state.customState as TerminalPanelState | undefined),
       codexResumeOutputBuffer: ''
     };
 
     // Store in map (ptyHost path: pid is already populated on the shim).
     this.terminals.set(panel.id, terminalProcess);
+
+    // Begin at-a-glance status detection for AI/CLI agent panels.
+    this.registerAgentStatusPanel(terminalProcess);
 
     // Tell the renderer which `ptyId` to subscribe to for this panel so
     // `TerminalPanel.tsx` can use `electronAPI.ptyHost.onData(ptyId, ...)`
@@ -1144,6 +1166,9 @@ export class TerminalPanelManager {
         this.emitActivityStatus(terminal);
       }, IDLE_THRESHOLD_MS);
 
+      // Feed PTY activity to the agent-status monitor (the "working" authority).
+      this.agentStatusMonitor.noteActivity(terminal.panelId, outputAt.getTime());
+
       // Detect alternate screen buffer enter/exit for universal TUI detection
       // (works on WSL where pty.process reports wsl.exe instead of the Linux foreground app)
       // \x1b[?1049h = enter alternate screen, \x1b[?1049l = leave alternate screen
@@ -1238,6 +1263,13 @@ export class TerminalPanelManager {
       if (terminal.activityStatus !== 'idle') {
         terminal.activityStatus = 'idle';
         this.emitActivityStatus(terminal);
+      }
+
+      // A finished agent is "done": settle its status to idle and stop tracking.
+      if (this.agentStatusMonitor.isTracked(terminal.panelId)) {
+        this.emitAgentStatus(terminal, 'idle', 'exit');
+        this.agentStatusMonitor.unregister(terminal.panelId);
+        this.maybeStopAgentStatusPoll();
       }
 
       // Emit exit event
@@ -1605,6 +1637,80 @@ export class TerminalPanelManager {
     });
   }
 
+  // ---- At-a-glance agent status (blocked / working / done) ----------------
+
+  /** Resolve the CLI agent driving a panel from its custom state / command. */
+  private resolveTerminalAgentType(
+    customState: TerminalPanelState | undefined,
+  ): CliAgentType | undefined {
+    return customState?.agentType ?? this.getCliAgentType(customState?.initialCommand);
+  }
+
+  /**
+   * Start status detection for a terminal panel. Every panel is tracked: known
+   * agents get their bespoke manifest, everything else (other CLI agents, plain
+   * shells) gets the generic one, so one status system covers all terminals.
+   */
+  private registerAgentStatusPanel(terminal: TerminalProcess): void {
+    this.agentStatusMonitor.register(terminal.panelId, Date.now());
+    this.ensureAgentStatusPoll();
+  }
+
+  private emitAgentStatus(terminal: TerminalProcess, state: AgentState, reason: string | null): void {
+    const payload: PanelAgentStatusEvent = {
+      panelId: terminal.panelId,
+      sessionId: terminal.sessionId,
+      state,
+      reason,
+    };
+    this.sendRendererEvent('panel:agentStatus', payload);
+  }
+
+  private ensureAgentStatusPoll(): void {
+    if (this.agentStatusPollTimer) return;
+    this.agentStatusPollTimer = setInterval(() => {
+      void this.pollAgentStatus();
+    }, AGENT_STATUS_POLL_MS);
+  }
+
+  private maybeStopAgentStatusPoll(): void {
+    if (this.agentStatusPollTimer && this.agentStatusMonitor.size === 0) {
+      clearInterval(this.agentStatusPollTimer);
+      this.agentStatusPollTimer = null;
+    }
+  }
+
+  /**
+   * Re-derive blocked/working/done for every tracked agent panel from its live
+   * screen + OSC title, and emit `panel:agentStatus` on any change. Runs on a
+   * short interval; a guard prevents overlapping passes.
+   */
+  private async pollAgentStatus(): Promise<void> {
+    if (this.agentStatusPolling) return;
+    this.agentStatusPolling = true;
+    try {
+      for (const terminal of this.terminals.values()) {
+        if (!this.agentStatusMonitor.isTracked(terminal.panelId)) continue;
+        const manifest = getManifestForAgent(terminal.agentType);
+        const emulator = terminal.screenEmulator;
+        if (!emulator) continue;
+
+        await emulator.waitForIdle();
+        const detection = detectAgentState(manifest, {
+          screen: emulator.getScreenText(),
+          oscTitle: emulator.getOscTitle(),
+          oscProgress: emulator.getOscProgress(),
+        });
+        const next = this.agentStatusMonitor.update(terminal.panelId, detection, Date.now());
+        if (next) this.emitAgentStatus(terminal, next, detection.matchedRuleId);
+      }
+    } catch (error) {
+      console.error('[TerminalPanelManager] agent status poll failed:', error);
+    } finally {
+      this.agentStatusPolling = false;
+    }
+  }
+
   destroyTerminal(panelId: string): void {
     const terminal = this.terminals.get(panelId);
     if (!terminal) {
@@ -1646,6 +1752,8 @@ export class TerminalPanelManager {
     this.terminals.delete(panelId);
     this.visibleViewersByPanel.delete(panelId);
     this.serializedBuffers.delete(panelId);
+    this.agentStatusMonitor.unregister(panelId);
+    this.maybeStopAgentStatusPoll();
   }
 
   /**

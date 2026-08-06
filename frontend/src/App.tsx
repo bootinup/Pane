@@ -27,6 +27,7 @@ import { DiscordPopup } from './components/DiscordPopup';
 import { ResumeSessionsDialog } from './components/ResumeSessionsDialog';
 import { useErrorStore } from './stores/errorStore';
 import { useSessionStore } from './stores/sessionStore';
+import { rollupSessionAgentState } from './utils/agentStatus';
 import { useConfigStore } from './stores/configStore';
 import { usePanelStore } from './stores/panelStore';
 import { API } from './utils/api';
@@ -169,6 +170,29 @@ function App() {
         const sessionIsNowIdle = nextPanelStore.getSessionActivityStatus(data.sessionId) === 'idle';
         if (sessionIsNowIdle && activeSessionId !== data.sessionId) {
           nextPanelStore.markUnviewedCompletedActivity(data.sessionId, data.lastActivityAt);
+        }
+      }
+    });
+    return () => unsubscribe?.();
+  }, []);
+
+  // Global agent status listener (blocked / working / done) for terminal panels.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.events?.onPanelAgentStatus?.((data) => {
+      const store = usePanelStore.getState();
+      const prevState = store.agentStatus[data.panelId];
+      store.setAgentStatus(data.panelId, data.sessionId, data.state);
+
+      // A background agent finishing should read as done (blue) right away —
+      // mark unseen completion from the unified working -> idle transition
+      // instead of waiting for the legacy 30s activity flip.
+      if (prevState === 'working' && data.state === 'idle') {
+        const next = usePanelStore.getState();
+        const activeSessionId = useSessionStore.getState().activeSessionId;
+        const sessionSettled =
+          rollupSessionAgentState(next.agentStatus, next.agentStatusSession, data.sessionId) === 'idle';
+        if (sessionSettled && activeSessionId !== data.sessionId) {
+          next.markUnviewedCompletedActivity(data.sessionId);
         }
       }
     });

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { PanelStore } from '../types/panelStore';
 import { ToolPanel } from '../../../shared/types/panels';
+import { rollupSessionAgentState } from '../utils/agentStatus';
 
 // FIX: Use immer for safe immutable updates
 export const usePanelStore = create<PanelStore>()(
@@ -9,6 +10,8 @@ export const usePanelStore = create<PanelStore>()(
     panels: {},
     activePanels: {},
     activityStatus: {},
+    agentStatus: {},
+    agentStatusSession: {},
     lastActivityAt: {},
     unviewedCompletedActivity: {},
     layouts: {},
@@ -54,6 +57,8 @@ export const usePanelStore = create<PanelStore>()(
           delete state.activePanels[sessionId];
         }
         delete state.activityStatus[panelId];
+        delete state.agentStatus[panelId];
+        delete state.agentStatusSession[panelId];
         delete state.lastActivityAt[panelId];
       });
     },
@@ -83,6 +88,20 @@ export const usePanelStore = create<PanelStore>()(
       set((state) => {
         delete state.activityStatus[panelId];
         delete state.lastActivityAt[panelId];
+      });
+    },
+
+    setAgentStatus: (panelId, sessionId, agentState) => {
+      set((state) => {
+        state.agentStatus[panelId] = agentState;
+        state.agentStatusSession[panelId] = sessionId;
+      });
+    },
+
+    clearAgentStatus: (panelId) => {
+      set((state) => {
+        delete state.agentStatus[panelId];
+        delete state.agentStatusSession[panelId];
       });
     },
 
@@ -122,6 +141,13 @@ export const usePanelStore = create<PanelStore>()(
       const sessionPanels = get().panels[sessionId] || [];
       const actStatus = get().activityStatus;
       return sessionPanels.some((p) => actStatus[p.id] === 'active') ? 'active' : 'idle';
+    },
+    getPanelAgentState: (panelId) => get().agentStatus[panelId],
+    getSessionAgentState: (sessionId) => {
+      // Roll up by the sessionId carried on each status event, so background
+      // sessions (whose panels aren't loaded into the store) still light up.
+      const { agentStatus, agentStatusSession } = get();
+      return rollupSessionAgentState(agentStatus, agentStatusSession, sessionId);
     },
     hasUnviewedCompletedActivity: (sessionId) => {
       return Boolean(get().unviewedCompletedActivity[sessionId]);

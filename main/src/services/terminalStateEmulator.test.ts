@@ -77,4 +77,29 @@ describe('TerminalStateEmulator', () => {
     expect(serialized).toContain('\x1b[?2004h');
     emulator.dispose();
   });
+
+  it('captures the OSC window title and updates it as it changes', async () => {
+    const emulator = new TerminalStateEmulator(20, 5);
+    expect(emulator.getOscTitle()).toBe('');
+
+    emulator.write('\x1b]2;⠙ Claude\x07body');
+    await emulator.waitForIdle();
+    expect(emulator.getOscTitle()).toBe('⠙ Claude');
+
+    emulator.write('\x1b]2;✳ Ready\x07');
+    await emulator.waitForIdle();
+    expect(emulator.getOscTitle()).toBe('✳ Ready');
+
+    emulator.dispose();
+    // Preserved after dispose, like screen text.
+    expect(emulator.getOscTitle()).toBe('✳ Ready');
+  });
+
+  it('captures OSC title set via the OSC 0 form', async () => {
+    const emulator = new TerminalStateEmulator(20, 5);
+    emulator.write('\x1b]0;Action Required · Codex\x07');
+    await emulator.waitForIdle();
+    expect(emulator.getOscTitle()).toBe('Action Required · Codex');
+    emulator.dispose();
+  });
 });

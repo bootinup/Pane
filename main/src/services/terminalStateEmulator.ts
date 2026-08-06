@@ -17,6 +17,8 @@ export class TerminalStateEmulator {
   private finalIsAlternateScreen = false;
   private finalSerializedBuffer = '';
   private finalScreenText = '';
+  private currentTitle = '';
+  private currentProgress = '';
 
   constructor(cols: number, rows: number) {
     this.terminal = new Terminal({
@@ -26,6 +28,16 @@ export class TerminalStateEmulator {
       allowProposedApi: true,
     });
     this.terminal.loadAddon(this.serializeAddon);
+    // Capture OSC window/icon title (OSC 0 / OSC 2) — agents encode live status
+    // (spinner, "Action Required") into it, which the status detector reads.
+    this.terminal.onTitleChange((title) => {
+      this.currentTitle = title;
+    });
+    // Capture OSC 9;4 progress payloads (e.g. "4;0") where terminals emit them.
+    this.terminal.parser.registerOscHandler(9, (data) => {
+      this.currentProgress = data;
+      return false; // allow other handlers to also process
+    });
   }
 
   write(data: string): void {
@@ -89,6 +101,16 @@ export class TerminalStateEmulator {
       lines.pop();
     }
     return lines.join('\n');
+  }
+
+  /** Latest OSC window/icon title, preserved after dispose. */
+  getOscTitle(): string {
+    return this.currentTitle;
+  }
+
+  /** Latest OSC 9;4 progress payload (e.g. "4;0"), preserved after dispose. */
+  getOscProgress(): string {
+    return this.currentProgress;
   }
 
   clearScrollback(): void {
