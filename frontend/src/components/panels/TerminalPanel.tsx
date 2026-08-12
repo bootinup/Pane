@@ -13,6 +13,7 @@ import { renderLog, devLog } from '../../utils/console';
 import { getTerminalTheme } from '../../utils/terminalTheme';
 import { resolveTerminalKeyHandling, shouldOpenTerminalSearch } from '../../utils/terminalKeyHandling';
 import { isMac } from '../../utils/platformUtils';
+import { copyTerminalText, isTerminalCopyShortcut } from '../../utils/terminalClipboard';
 import { FileEdit, FolderOpen } from 'lucide-react';
 import { useTerminalLinks } from '../terminal/hooks/useTerminalLinks';
 import { TerminalLinkTooltip } from '../terminal/TerminalLinkTooltip';
@@ -555,6 +556,11 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
     };
   }, [webglAllowed, panelVisible, windowFocused, isInitialized, disposeWebglRenderer, loadWebglRenderer]);
 
+  const handleClipboardError = useCallback((error: unknown) => {
+    console.error('[TerminalPanel] Failed to copy selection to clipboard:', error);
+    setToastMessage('Failed to copy terminal text');
+  }, []);
+
   // Terminal link handling hook
   const {
     onMouseMove,
@@ -913,6 +919,15 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
 
         // Intercept app-level shortcuts before xterm consumes them
         terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+          if (isTerminalCopyShortcut(e, isMac())) {
+            if (e.type === 'keydown' && terminal?.hasSelection()) {
+              void copyTerminalText(terminal.getSelection()).catch((error: unknown) => {
+                handleClipboardError(error);
+              });
+            }
+            return false;
+          }
+
           if (!keyboardShortcutsEnabledRef.current) return !isHotkeyEnabledForEvent(e);
 
           const ctrlOrMeta = e.ctrlKey || e.metaKey;
@@ -1912,7 +1927,11 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
 
   // Always render the terminal div to keep XTerm instance alive
   return (
-    <div className="h-full w-full relative group/terminal" onMouseMove={onMouseMove} onKeyDown={handleTerminalKeyDown}>
+    <div
+      className="h-full w-full relative group/terminal"
+      onMouseMove={onMouseMove}
+      onKeyDown={handleTerminalKeyDown}
+    >
       <div ref={terminalRef} className="h-full w-full" />
 
       {/* Terminal search overlay */}
