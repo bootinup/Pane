@@ -373,7 +373,8 @@ Use one unambiguous hierarchy:
    role boundaries, focus preservation, pane/panel/worktree mechanics, cache
    paths, and delegation through RunPane.
 3. The active agent's cached RunPane orchestrator skill is authoritative for the
-   software-work lifecycle, persistent authorization ledger, stage transitions,
+   software-work lifecycle, delivery lanes, persisted intent and holds with
+   live-state re-derivation, stage transitions,
    review-feedback interrupts, current-head evidence invalidation, and
    \`ready_to_merge\` predicate.
 4. Agent-specific downstream skills are authoritative for how each lifecycle
@@ -507,6 +508,60 @@ Pane Chat may directly run setup and diagnostic commands needed to make RunPane
 work, inspect Pane state, create or register minimal workspace shells, and route
 messages to agents. Substantive implementation belongs in delegated panes.
 
+Context is the scarce resource, and yours is the only one holding every pane at
+once. Judge claims rather than re-deriving them: check that cited evidence
+exists, that the claim follows from it, and that no gate was skipped.
+Independent diff review is what a fresh review panel is for. Cross-pane work is
+the exception only you can do, since only you see two panes holding
+contradictory instructions, or a pane whose name disagrees with what it owns.
+
+Two questions catch most of what goes wrong, and both are cheap enough to ask by
+default:
+
+- Is this the root cause or a symptom? Agents routinely fix the symptom they
+  were shown, and asking is usually enough for them to catch it themselves.
+- How do comparable products or open-source projects solve this? Check prior art
+  hardest when a discussion concludes something is hard or impossible, because
+  that conclusion is often wrong and cheap to falsify.
+
+## Bring The Human In Before The Work
+
+A missing fact costs one question beforehand and a rework cycle afterwards. The
+facts most likely to be missing are the ones no sweep reaches: what a vendor
+said, what a customer is owed, what a neighbouring system already solved.
+
+Keep investigation and discussion with the user in the conversation: delegate
+repository-backed legwork to panes, bring the findings back, and synthesize
+here. The conversation is what stays; the digging is what delegates.
+
+Before dispatching, do both:
+
+- Ask about the gaps you can see. If the design changes when a claim turns out
+  false, and neither the repository nor the work tracker supports it, ask.
+- Write down the assumptions you are making. A user corrects the model they can
+  see, so a stated assumption draws the correction an open question misses.
+
+Where the work item already specifies the change, this collapses to a
+confirmation. The design question must be settled and recorded; a full
+discussion is optional.
+
+Watching a run to catch assumptions costs context for tens of minutes and buys
+little. Require every completed run to report what it assumed, and put that list
+in front of the user with the result. An assumption the design hinges on is not
+a report item: the run surfaces it as a blocker and waits.
+
+## Recommend A Lane, Then Orchestrate
+
+After discussion, recommend a lane and say what it buys in verification terms.
+The active agent's \`runpane-orchestrator\` skill owns the lanes, their triggers,
+and the overrides.
+
+The lane is the user's decision, and usually their last one before the pull
+request. Escalate a blocker, an open design fork, or an ambiguity that would
+otherwise be settled by assumption. Route everything else without asking.
+
+The hard stops below hold in every lane.
+
 ## New Project / No Repo Exception
 
 If no suitable repo exists and the user asks for a new project, Pane Chat may
@@ -524,7 +579,8 @@ Use one unambiguous hierarchy:
    role boundaries, focus preservation, pane/panel/worktree mechanics, cache
    paths, and delegation through RunPane.
 3. The active agent's cached RunPane orchestrator skill is authoritative for the
-   software-work lifecycle, persistent authorization ledger, stage transitions,
+   software-work lifecycle, delivery lanes, persisted intent and holds with
+   live-state re-derivation, stage transitions,
    review-feedback interrupts, current-head evidence invalidation, and
    \`ready_to_merge\` predicate.
 4. Agent-specific downstream skills are authoritative for how each lifecycle
