@@ -28,6 +28,7 @@ import type {
   SettingsSettingId,
 } from '../types/settings';
 import type { PreferredShell } from '../types/config';
+import type { VersionInfo } from '../types/session';
 import { API } from '../utils/api';
 
 interface AvailableShell {
@@ -47,9 +48,10 @@ interface SettingsProps {
   openRequest?: SettingsOpenRequest;
   onOpenRequestHandled: () => void;
   onShowKeyboardShortcuts: () => void;
+  onUpdate: (versionInfo: VersionInfo) => void;
 }
 
-export function Settings({ isOpen, onClose, category, onCategoryChange, openRequest, onOpenRequestHandled, onShowKeyboardShortcuts }: SettingsProps) {
+export function Settings({ isOpen, onClose, category, onCategoryChange, openRequest, onOpenRequestHandled, onShowKeyboardShortcuts, onUpdate }: SettingsProps) {
   const persistence = useSettingsPersistence(isOpen);
   const dirtyForms = useDirtySettingsForms();
   const {
@@ -151,6 +153,14 @@ export function Settings({ isOpen, onClose, category, onCategoryChange, openRequ
     requestTransition(onShowKeyboardShortcuts);
   }, [onShowKeyboardShortcuts, requestTransition]);
 
+  const showUpdate = useCallback((versionInfo: VersionInfo) => {
+    requestTransition(() => {
+      setRemoteSubview(undefined);
+      onClose();
+      onUpdate(versionInfo);
+    });
+  }, [onClose, onUpdate, requestTransition]);
+
   const openRemoteSubview = useCallback((subview: RemoteAccessSubviewId) => {
     requestTransition(() => setRemoteSubview(subview));
   }, [requestTransition]);
@@ -160,7 +170,7 @@ export function Settings({ isOpen, onClose, category, onCategoryChange, openRequ
     const sharedDirtyProps = { onDirtyChange: setDirty };
     switch (category) {
       case 'general':
-        return <GeneralSettings persistence={persistence} />;
+        return <GeneralSettings persistence={persistence} onUpdate={showUpdate} />;
       case 'appearance':
         return <AppearanceSettings persistence={persistence} />;
       case 'terminal':

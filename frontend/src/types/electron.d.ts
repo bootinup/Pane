@@ -1,5 +1,5 @@
 // Type definitions for Electron preload API
-import type { Session, SessionOutput, GitStatus, VersionUpdateInfo } from './session';
+import type { Session, SessionOutput, GitStatus, VersionInfo, VersionUpdateInfo } from './session';
 import type { Project } from './project';
 import type { Folder } from './folder';
 import type { AppConfig, UpdateConfigRequest } from './config';
@@ -70,7 +70,7 @@ interface ElectronAPI {
   isPackaged: () => Promise<boolean>;
 
   // Version checking
-  checkForUpdates: () => Promise<IPCResponse>;
+  checkForUpdates: () => Promise<IPCResponse<VersionInfo>>;
   getVersionInfo: () => Promise<IPCResponse>;
   
   // Auto-updater

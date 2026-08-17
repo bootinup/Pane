@@ -52,7 +52,7 @@ import {
   posthog,
   queuePendingEvent,
 } from './services/posthog';
-import type { VersionUpdateInfo } from './types/session';
+import type { VersionInfo, VersionUpdateInfo } from './types/session';
 import type { AnalyticsIdentity, TerminalShortcut } from './types/config';
 import type { ResumableSession } from '../../shared/types/panels';
 import type { Project } from './types/project';
@@ -783,14 +783,14 @@ function App() {
     };
   }, [showNotification]);
 
-  const handleAboutUpdate = (versionInfo: { current: string; latest: string; hasUpdate: boolean; releaseUrl?: string; downloadUrl?: string; releaseNotes?: string }) => {
+  const handleUpdateRequest = useCallback((versionInfo: VersionInfo) => {
     setUpdateVersionInfo({
       ...versionInfo,
       version: versionInfo.latest,
     });
     setIsAboutOpen(false);
     setIsUpdateDialogOpen(true);
-  };
+  }, []);
 
   const handlePermissionResponse = useCallback(async (
     requestId: string,
@@ -854,6 +854,7 @@ function App() {
             closeSettings();
             setIsKeyboardShortcutsOpen(true);
           }}
+          onUpdate={handleUpdateRequest}
         />
         <AnalyticsConsentDialog
           isOpen={isAnalyticsConsentOpen}
@@ -875,7 +876,7 @@ function App() {
           onClose={() => setIsSupportPaneOpen(false)}
         />
         <Welcome isOpen={isWelcomeOpen} onClose={() => setIsWelcomeOpen(false)} />
-        <AboutDialog isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} onUpdate={handleAboutUpdate} />
+        <AboutDialog isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} onUpdate={handleUpdateRequest} />
         <UpdateDialog
           isOpen={isUpdateDialogOpen}
           onClose={() => setIsUpdateDialogOpen(false)}

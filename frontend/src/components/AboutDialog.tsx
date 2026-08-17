@@ -69,7 +69,7 @@ export function AboutDialog({ isOpen, onClose, onUpdate }: AboutDialogProps) {
 
     try {
       const result = await window.electronAPI.checkForUpdates();
-      if (result.success) {
+      if (result.success && result.data) {
         setVersionInfo(result.data);
         if (result.data.hasUpdate) {
           handleUpdate(result.data);

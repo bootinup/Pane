@@ -196,14 +196,17 @@ import type { Folder } from './folder';
 export type ContextMenuPayload = Session | Folder;
 
 // Version update info interface
-export interface VersionUpdateInfo {
-  version: string;
+export interface VersionInfo {
   current: string;
   latest: string;
   hasUpdate: boolean;
   releaseUrl?: string;
   releaseNotes?: string;
   downloadUrl?: string;
+}
+
+export interface VersionUpdateInfo extends VersionInfo {
+  version: string;
   mandatory?: boolean;
 }
 
