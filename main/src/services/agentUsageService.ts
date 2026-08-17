@@ -29,6 +29,12 @@ interface JsonRpcMessage {
   error?: unknown;
 }
 
+interface JsonRpcRequest {
+  method: string;
+  id?: number | string;
+  params?: Record<string, unknown>;
+}
+
 interface CodexProbeResult {
   account: unknown;
   rateLimits: unknown;
@@ -247,7 +253,7 @@ export async function terminateCodexProcess(
 
 function writeProtocolMessage(
   child: ChildProcessWithoutNullStreams,
-  message: object,
+  message: JsonRpcRequest,
   onError: (error: Error) => void,
 ): void {
   if (child.stdin.destroyed || child.stdin.writableEnded) {
@@ -290,7 +296,7 @@ export async function probeCodexUsage(
       });
     };
 
-    const sendProtocolMessage = (message: object) => {
+    const sendProtocolMessage = (message: JsonRpcRequest) => {
       if (settled) return;
       writeProtocolMessage(child, message, error => finish(error));
     };
