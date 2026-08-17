@@ -73,6 +73,8 @@ import type {
   RunpaneToolSpec,
   RunpaneWorktreeCleanupState,
 } from '../../../shared/types/runpaneOrchestration';
+import { getAppDirectory } from '../utils/appDirectory';
+import { collectRemoteDaemonExecutableHealth } from '../daemon/remoteDaemonExecutableHealth';
 
 const RUNPANE_CHANNELS = [
   'runpane:doctor',
@@ -130,6 +132,7 @@ export function registerRunpaneHandlers(
         },
         daemon: {
           channels: [...runpaneDaemonChannels()],
+          executableHealth: collectRemoteDaemonExecutableHealth(getAppDirectory()),
         },
         repos: {
           count: repos.length,
