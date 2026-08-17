@@ -6,6 +6,8 @@ if [[ -z "$appimage" || ! -f "$appimage" ]]; then
   echo "Usage: $0 <Pane.AppImage>" >&2
   exit 2
 fi
+appimage_dir="$(cd "$(dirname "$appimage")" && pwd)"
+appimage="$appimage_dir/$(basename "$appimage")"
 
 pane_dir="$(mktemp -d)"
 output_file="$(mktemp)"
