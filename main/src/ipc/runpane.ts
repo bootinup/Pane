@@ -4,7 +4,7 @@ import path from 'path';
 import type { IpcMain } from 'electron';
 import type { AppServices } from './types';
 import type { PaneCommandRegistry } from '../daemon/commandRegistry';
-import { PathResolver } from '../utils/pathResolver';
+import { PathResolver, ProjectEnvironment } from '../utils/pathResolver';
 import { sanitizeTerminalOutput } from '../utils/terminalOutputSanitizer';
 import { panelManager } from '../services/panelManager';
 import { terminalPanelManager, type TerminalPanelSnapshot } from '../services/terminalPanelManager';
@@ -16,6 +16,7 @@ import type { Project } from '../database/models';
 import type { Session, SessionOutput } from '../types/session';
 import type { CreatePanelRequest, TerminalPanelState, ToolPanel } from '../../../shared/types/panels';
 import { RUNPANE_CONTRACT } from '../../../shared/types/generatedRunpaneContract';
+import { isAgentSupportedOnPlatform } from '../../../shared/constants/agentLaunchPresets';
 import type {
   RunpaneAgentId,
   RunpaneAgentDoctorRequest,
@@ -321,7 +322,7 @@ export function registerRunpaneHandlers(
             index,
             name: pane.name,
             pinned: Boolean(pane.pinned),
-            tool: describeTool(resolveToolSpec(pane.tool)),
+            tool: describeTool(resolveToolSpec(pane.tool, new PathResolver(repo).environment)),
           })),
         };
       }
@@ -429,7 +430,11 @@ export function registerRunpaneHandlers(
     return withRunpaneAction(services, 'panels:create', {}, async () => {
       const normalized = parsePanelCreateRequest(request);
       const pane = resolvePane(sessionManager, normalized.paneId);
-      const tool = resolveToolSpec(normalized.tool);
+      const repo = sessionManager.getProjectForSession(pane.id);
+      if (!repo) {
+        throw new Error(`No Pane repo found for pane ${pane.id}`);
+      }
+      const tool = resolveToolSpec(normalized.tool, new PathResolver(repo).environment);
       const { panel, readiness, initialInput } = await createTerminalPanelForSession(services, pane, tool, {
         activate: resolvePanelCreateActivation(normalized, tool),
         waitReady: normalized.waitReady,
@@ -833,6 +838,7 @@ function shouldUseArgumentDelivery(tool: RunpaneResolvedTool): boolean {
   return Boolean(
     tool.initialInput &&
     (tool.agent === 'claude' ||
+      tool.agent === 'cursor' ||
       (tool.agent === 'codex' && !isSlashCommandInput(tool.initialInput))),
   );
 }
@@ -951,7 +957,7 @@ async function createPaneItem(
   }
 
   try {
-    const tool = resolveToolSpec(item.tool);
+    const tool = resolveToolSpec(item.tool, new PathResolver(repo).environment);
     const sessionResult = await taskQueue.createSessionAndWait({
       prompt: item.sessionPrompt ?? '',
       worktreeTemplate: item.worktreeName ?? item.name,
@@ -1380,6 +1386,11 @@ function looksLikePendingComposer(text: string): boolean {
     /(?:press\s+)?(?:ctrl|control)\+enter\s+to\s+submit/i.test(text);
 }
 
+// GUI-launched Electron PATHs typically miss ~/.local/bin, cursor-agent's install target.
+const AGENT_FALLBACK_BIN_PATHS: Partial<Record<RunpaneAgentId, readonly string[]>> = {
+  cursor: ['$HOME/.local/bin/cursor-agent'],
+};
+
 async function runAgentDoctor(
   services: AppServices,
   repo: Project,
@@ -1392,6 +1403,24 @@ async function runAgentDoctor(
   const executable = agentCommandExecutable(command);
   const checks: RunpaneAgentDoctorResult['checks'] = [];
   const warnings: string[] = [];
+
+  if (!isAgentSupportedOnPlatform(agent, environment)) {
+    checks.push({
+      name: 'platform',
+      ok: false,
+      message: `${AGENT_TEMPLATES[agent].title} is not supported on ${environment} repos.`,
+    });
+    return {
+      ok: false,
+      agent,
+      command,
+      repo: repoSummary,
+      environment,
+      available: false,
+      checks,
+      warnings: warnings.length > 0 ? warnings : undefined,
+    };
+  }
 
   if (!context) {
     checks.push({
@@ -1414,6 +1443,7 @@ async function runAgentDoctor(
   const lookupCommand = environment === 'windows' ? `where ${executable}` : `command -v ${executable}`;
   let executablePath: string | undefined;
   let version: string | undefined;
+  let versionCommand = `${executable} --version`;
 
   try {
     const result = await context.commandRunner.execAsync(lookupCommand, repo.path, {
@@ -1434,9 +1464,34 @@ async function runAgentDoctor(
     });
   }
 
+  if (!executablePath && environment !== 'windows') {
+    for (const fallback of AGENT_FALLBACK_BIN_PATHS[agent] ?? []) {
+      try {
+        const result = await context.commandRunner.execAsync(`command -v "${fallback}"`, repo.path, {
+          timeout: 5_000,
+          silent: true,
+        });
+        const fallbackPath = firstNonEmptyLine(result.stdout);
+        if (fallbackPath) {
+          executablePath = fallbackPath;
+          versionCommand = `"${fallback}" --version`;
+          checks.push({
+            name: 'executable-fallback',
+            ok: true,
+            message: `Found ${executable} at ${fallbackPath}.`,
+          });
+          warnings.push(`${executable} is installed at ${fallbackPath} but not on PATH; GUI-launched apps may not see it.`);
+          break;
+        }
+      } catch {
+        // Fallback probes are best-effort; the PATH check already reported the miss.
+      }
+    }
+  }
+
   if (executablePath) {
     try {
-      const result = await context.commandRunner.execAsync(`${executable} --version`, repo.path, {
+      const result = await context.commandRunner.execAsync(versionCommand, repo.path, {
         timeout: 5_000,
         silent: true,
       });
@@ -2169,9 +2224,12 @@ function resolveProjectByName(projects: Project[], selectorName: string): Projec
   return matches[0];
 }
 
-function resolveToolSpec(tool: RunpaneToolSpec): RunpaneResolvedTool {
+function resolveToolSpec(tool: RunpaneToolSpec, environment?: ProjectEnvironment): RunpaneResolvedTool {
   if ('agent' in tool) {
     const template = AGENT_TEMPLATES[tool.agent];
+    if (environment && !isAgentSupportedOnPlatform(tool.agent, environment)) {
+      throw new Error(`${template.title} is not supported on ${environment} repos.`);
+    }
     return {
       title: tool.title ?? template.title,
       command: template.command,
