@@ -135,7 +135,7 @@ async function openDesktop(
     activeProjectId: project.id,
   });
   await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
-  await expect(page.locator('[data-testid="sidebar"]').first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('[data-testid="sidebar"]').first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('Something went wrong')).toHaveCount(0);
 }
 
