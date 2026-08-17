@@ -1,31 +1,32 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { API } from '../utils/api';
 import { useSessionStore } from '../stores/sessionStore';
-import { Session } from '../types/session';
+import type { Session } from '../types/session';
 import { PanelTabBar } from './panels/PanelTabBar';
 import { PanelContainer } from './panels/PanelContainer';
 import { usePanelStore } from '../stores/panelStore';
 import { panelApi } from '../services/panelApi';
-import { ToolPanel, ToolPanelType } from '../../../shared/types/panels';
-import { PanelCreateOptions } from '../types/panelComponents';
+import type { ToolPanel, ToolPanelType } from '../../../shared/types/panels';
+import type { PanelCreateOptions } from '../types/panelComponents';
 import { SessionProvider } from '../contexts/SessionContext';
 import { DetailPanel } from './DetailPanel';
 import { useResizable } from '../hooks/useResizable';
+import { CommitMessageDialog } from './session/CommitMessageDialog';
+import { SetTrackingBranchDialog } from './session/SetTrackingBranchDialog';
+import { useMainRepoGitActions } from '../hooks/useMainRepoGitActions';
 
 interface ProjectViewProps {
   projectId: number;
   projectName: string;
-  onGitPull: () => void;
-  onGitPush: () => void;
-  isMerging: boolean;
+  configuredIDECommand?: string | null;
+  onConfigureIDE: () => void;
 }
 
 export const ProjectView: React.FC<ProjectViewProps> = ({ 
   projectId, 
-  projectName, 
-  onGitPull, 
-  onGitPush, 
-  isMerging
+  projectName,
+  configuredIDECommand,
+  onConfigureIDE,
 }) => {
   const [mainRepoSessionId, setMainRepoSessionId] = useState<string | null>(null);
   const [mainRepoSession, setMainRepoSession] = useState<Session | null>(null);
@@ -204,17 +205,6 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
     [mainRepoSessionId, addPanel, setActivePanelInStore]
   );
   
-  // Wrapped git operations - just call the handlers directly without navigating to a panel
-  const handleGitPull = useCallback(() => {
-    onGitPull();
-  }, [onGitPull]);
-
-  const handleGitPush = useCallback(() => {
-    onGitPush();
-  }, [onGitPush]);
-  
-  // We don't need terminal handling or the hook for now, as panels handle their own terminals
-  
   // Debug logging
   useEffect(() => {
     console.log('[ProjectView] Session state:', { 
@@ -268,10 +258,15 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
   // Subscribe to session updates - optimized to check for actual changes
   useEffect(() => {
     if (!mainRepoSessionId) return;
-    
-    let previousSession = useSessionStore.getState().sessions.find(s => s.id === mainRepoSessionId);
+
+    const selectMainSession = (state: ReturnType<typeof useSessionStore.getState>) => (
+      state.activeMainRepoSession?.id === mainRepoSessionId
+        ? state.activeMainRepoSession
+        : state.sessions.find(s => s.id === mainRepoSessionId)
+    );
+    let previousSession = selectMainSession(useSessionStore.getState());
     const unsubscribe = useSessionStore.subscribe((state) => {
-      const session = state.sessions.find(s => s.id === mainRepoSessionId);
+      const session = selectMainSession(state);
       // Only update if session actually changed
       if (session && session !== previousSession) {
         previousSession = session;
@@ -281,6 +276,8 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
     
     return unsubscribe;
   }, [mainRepoSessionId]);
+
+  const mainRepoGit = useMainRepoGitActions(mainRepoSessionId, mainRepoSession);
 
   // Listen for panel updates from the backend
   useEffect(() => {
@@ -310,7 +307,19 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
     <div className="flex-1 flex flex-col overflow-hidden bg-bg-primary">
       {/* SINGLE SessionProvider wraps everything */}
       {activeMainRepoSession && (
-        <SessionProvider session={detailSession} projectName={projectName}>
+        <SessionProvider
+          session={detailSession}
+          projectName={projectName}
+          gitBranchActions={mainRepoGit.actions}
+          isMerging={mainRepoGit.actionsBusy}
+          gitCommands={mainRepoGit.gitCommands}
+          onOpenIDEWithCommand={mainRepoGit.handleOpenIDE}
+          onConfigureIDE={onConfigureIDE}
+          onSetTracking={mainRepoGit.handleOpenSetTracking}
+          trackingBranch={mainRepoGit.currentUpstream}
+          configuredIDECommand={configuredIDECommand}
+          isRemoteMode={mainRepoGit.isRemoteMode}
+        >
           {/* Tab bar at top */}
           <PanelTabBar
             panels={sessionPanels}
@@ -385,11 +394,7 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
               onToggle={() => setDetailVisible(v => !v)}
               width={detailWidth}
               onResize={startDetailResize}
-              projectGitActions={{
-                onPull: handleGitPull,
-                onPush: handleGitPush,
-                isMerging
-              }}
+              mergeError={mainRepoGit.error}
             />
           </div>
         </SessionProvider>
@@ -424,6 +429,28 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
           No session selected
         </div>
       )}
+
+      <CommitMessageDialog
+        isOpen={mainRepoGit.showCommitDialog}
+        onClose={() => mainRepoGit.setShowCommitDialog(false)}
+        dialogType="commit"
+        gitCommands={mainRepoGit.gitCommands}
+        commitMessage={mainRepoGit.commitMessage}
+        setCommitMessage={mainRepoGit.setCommitMessage}
+        shouldSquash={false}
+        setShouldSquash={() => {}}
+        onConfirm={mainRepoGit.handleCommit}
+        isMerging={mainRepoGit.isRunning}
+      />
+
+      <SetTrackingBranchDialog
+        isOpen={mainRepoGit.showSetTrackingDialog}
+        currentUpstream={mainRepoGit.currentUpstream}
+        remoteBranches={mainRepoGit.remoteBranches}
+        checkoutLabel="the primary checkout"
+        onSelect={mainRepoGit.handleSelectUpstream}
+        onClose={() => mainRepoGit.setShowSetTrackingDialog(false)}
+      />
     </div>
   );
 };
