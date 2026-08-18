@@ -41,7 +41,10 @@ export function useNotifications() {
   // Window focus state synced from the main process via IPC. document.hasFocus()
   // lies when DevTools is focused or another Electron sub-window has focus, so
   // we use the BrowserWindow.isFocused() source of truth exposed by preload.
-  const windowFocusedRef = useRef<boolean>(typeof document !== 'undefined' ? document.hasFocus() : true);
+  const windowFocusedRef = useRef<boolean | null>(null);
+  if (windowFocusedRef.current === null) {
+    windowFocusedRef.current = document.hasFocus();
+  }
 
   useEffect(() => {
     const electronWindow = window.electronAPI?.window;
@@ -83,6 +86,7 @@ export function useNotifications() {
       const res = await API.projects.getAll();
       if (res.success && res.data) {
         projectNamesRef.current = new Map(
+          // SAFETY: The named IPC/API channel contract establishes this response payload type.
           (res.data as { id: number; name: string }[]).map((p) => [p.id, p.name])
         );
       }
