@@ -3,7 +3,9 @@ import { IconButton } from '../../ui/Button';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '../../ui/Select';
@@ -12,21 +14,7 @@ import { SettingRow, SettingsPage } from '../SettingRow';
 import { ImmediateToggle, SegmentedControl } from '../SettingsControls';
 import type { SettingsPersistence } from '../useSettingsPersistence';
 import type { AppConfig } from '../../../types/config';
-
-const THEMES: Array<{ id: NonNullable<AppConfig['theme']>; label: string }> = [
-  { id: 'light-rounded', label: 'Light (rounded)' },
-  { id: 'light', label: 'Light (sharp)' },
-  { id: 'forge', label: 'Forge' },
-  { id: 'night-owl', label: 'Night Owl' },
-  { id: 'night-owl-oled', label: 'Night Owl (OLED)' },
-  { id: 'dusk', label: 'Dusk' },
-  { id: 'dusk-oled', label: 'Dusk (OLED)' },
-  { id: 'ember', label: 'Ember' },
-  { id: 'aurora', label: 'Aurora' },
-  { id: 'terracotta', label: 'Terracotta' },
-  { id: 'dark', label: 'Dark (sharp)' },
-  { id: 'oled', label: 'OLED Black (sharp)' },
-];
+import { THEME_OPTION_GROUPS } from '../../../utils/themeOptions';
 
 export function AppearanceSettings({ persistence }: { persistence: SettingsPersistence }) {
   const config = persistence.config!;
@@ -34,7 +22,7 @@ export function AppearanceSettings({ persistence }: { persistence: SettingsPersi
 
   const saveScale = (value: number) => persistence.saveConfig('ui-scale', { uiScale: value });
   const saveTheme = (value: string) => {
-    // SAFETY: Theme values come from the THEMES list, whose ids match AppConfig.theme.
+    // SAFETY: Theme values come from THEME_OPTION_GROUPS, whose ids match AppConfig.theme.
     return persistence.saveConfig('theme', { theme: value as AppConfig['theme'] });
   };
 
@@ -54,7 +42,16 @@ export function AppearanceSettings({ persistence }: { persistence: SettingsPersi
             >
               <SelectTrigger aria-label="Theme"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {THEMES.map((theme) => <SelectItem key={theme.id} value={theme.id}>{theme.label}</SelectItem>)}
+                {THEME_OPTION_GROUPS.map((group) => (
+                  <SelectGroup key={group.family}>
+                    <SelectLabel>{group.family}</SelectLabel>
+                    {group.options.map((theme) => (
+                      <SelectItem key={theme.id} value={theme.id} description={theme.description}>
+                        {theme.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
               </SelectContent>
             </Select>
           </div>

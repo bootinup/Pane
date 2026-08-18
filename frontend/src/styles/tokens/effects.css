@@ -195,6 +195,57 @@
   --panel-shell-shadow: var(--shadow-sm);
 }
 
+/* Synthwave Theme — soft rounded shells, magenta glow lives here only */
+:root.synthwave {
+  --button-radius: var(--radius-md);
+  --card-radius: var(--radius-lg);
+  --input-radius: var(--radius-md);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-xs);
+  --app-shell-radius: var(--radius-xl);
+  --panel-shell-radius: var(--radius-lg);
+  --panel-shell-glow: rgba(255, 95, 215, 0.10);
+  --panel-shell-shadow:
+    0 10px 22px rgba(0, 0, 0, 0.28),
+    0 0 0 1px var(--panel-shell-glow),
+    inset 0 1px 0 rgba(255, 95, 215, 0.06);
+}
+
+/* Acid Terminal Theme — tight radii, lime hairline glow */
+:root.acid {
+  --button-radius: var(--radius-default);
+  --card-radius: var(--radius-md);
+  --input-radius: var(--radius-default);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-none);
+  --app-shell-radius: 0.625rem;
+  --panel-shell-radius: 0.5rem;
+  --panel-shell-glow: rgba(180, 255, 58, 0.08);
+  --panel-shell-shadow:
+    0 8px 18px rgba(0, 0, 0, 0.26),
+    0 0 0 1px var(--panel-shell-glow),
+    inset 0 1px 0 rgba(180, 255, 58, 0.05);
+}
+
+/* Tokyo Rain Theme — rounded shells, cool blue rain glow */
+:root.tokyo-rain {
+  --button-radius: var(--radius-lg);
+  --card-radius: var(--radius-xl);
+  --input-radius: var(--radius-lg);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-sm);
+  --app-shell-radius: var(--radius-2xl);
+  --panel-shell-radius: var(--radius-xl);
+  --panel-shell-glow: rgba(92, 179, 255, 0.10);
+  --panel-shell-shadow:
+    0 12px 24px rgba(0, 0, 0, 0.30),
+    0 0 0 1px var(--panel-shell-glow),
+    inset 0 1px 0 rgba(92, 179, 255, 0.06);
+}
+
 /* Light Rounded — Forge-like rounded light shells */
 :root.light-rounded {
   --button-radius: var(--radius-lg);
@@ -206,4 +257,164 @@
   --app-shell-radius: var(--radius-2xl);
   --panel-shell-radius: var(--radius-xl);
   --panel-shell-shadow: var(--shadow-sm);
+}
+
+/* Folio / Newsprint / Walnut deliberately keep the flat, edge-to-edge shell
+   treatment of the base light/dark themes (no --app-shell-radius /
+   --panel-shell-* islands, no index.css shell borders): a printed sheet is
+   one surface with rule lines, not a stack of cards. */
+
+/* Folio — set type: crisp corners, no drop shadows, depth from tonal steps only */
+:root.folio {
+  --button-radius: var(--radius-sm);
+  --card-radius: var(--radius-default);
+  --input-radius: var(--radius-sm);
+  --modal-radius: var(--radius-md);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-none);
+  --dropdown-shadow: 0 6px 18px rgba(31, 27, 23, 0.14);
+}
+
+/* Newsprint — column rules, square-ish corners, no drop shadows */
+:root.newsprint {
+  --button-radius: var(--radius-sm);
+  --card-radius: var(--radius-default);
+  --input-radius: var(--radius-sm);
+  --modal-radius: var(--radius-md);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-none);
+  --dropdown-shadow: 0 6px 18px rgba(36, 39, 43, 0.16);
+}
+
+/* Walnut — soft-bound: gentle radius, shallow shadows */
+:root.walnut {
+  --button-radius: var(--radius-md);
+  --card-radius: var(--radius-lg);
+  --input-radius: var(--radius-md);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-xs);
+  --dropdown-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+/* Amber CRT — soft bezel radii, warm phosphor glow instead of drop shadows */
+:root.amber-crt {
+  --button-radius: var(--radius-md);
+  --card-radius: var(--radius-lg);
+  --input-radius: var(--radius-md);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-none);
+  --app-shell-radius: var(--radius-xl);
+  --panel-shell-radius: var(--radius-lg);
+  --panel-shell-shadow: 0 0 22px rgba(255, 176, 0, 0.06);
+}
+
+/* Teletype — Braun-style rounded shells, quiet paper shadows */
+:root.teletype {
+  --button-radius: var(--radius-lg);
+  --card-radius: var(--radius-xl);
+  --input-radius: var(--radius-lg);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-sm);
+  --app-shell-radius: var(--radius-2xl);
+  --panel-shell-radius: var(--radius-xl);
+  --panel-shell-shadow: var(--shadow-sm);
+}
+
+/* Dot Matrix — tight pixel radii, no shadows (LCD has no depth) */
+:root.dot-matrix {
+  --button-radius: var(--radius-sm);
+  --card-radius: var(--radius-default);
+  --input-radius: var(--radius-sm);
+  --modal-radius: var(--radius-default);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-none);
+  --modal-shadow: var(--shadow-none);
+  --app-shell-radius: var(--radius-md);
+  --panel-shell-radius: var(--radius-default);
+  --panel-shell-shadow: var(--shadow-none);
+}
+
+/* Haar — soft fog radii, whisper shadows */
+:root.haar {
+  --button-radius: var(--radius-lg);
+  --card-radius: var(--radius-xl);
+  --input-radius: var(--radius-lg);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-sm);
+  --app-shell-radius: var(--radius-2xl);
+  --panel-shell-radius: var(--radius-xl);
+  --panel-shell-shadow: var(--shadow-sm);
+}
+
+/* Abyss — deep, rounded shells with pressure-depth shadows */
+:root.abyss {
+  --button-radius: var(--radius-lg);
+  --card-radius: var(--radius-xl);
+  --input-radius: var(--radius-md);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-sm);
+  --app-shell-radius: var(--radius-xl);
+  --panel-shell-radius: var(--radius-lg);
+  --panel-shell-shadow: var(--shadow-sm);
+}
+
+/* Understory — organic radii, matte surfaces */
+:root.understory {
+  --button-radius: var(--radius-lg);
+  --card-radius: var(--radius-xl);
+  --input-radius: var(--radius-md);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-xs);
+  --app-shell-radius: var(--radius-xl);
+  --panel-shell-radius: var(--radius-lg);
+  --panel-shell-shadow: var(--shadow-xs);
+}
+
+/* Colorblind Safe — clean rounded shells, no button shadows */
+:root.colorblind-safe {
+  --button-radius: var(--radius-md);
+  --card-radius: var(--radius-lg);
+  --input-radius: var(--radius-md);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-xs);
+  --app-shell-radius: var(--radius-xl);
+  --panel-shell-radius: var(--radius-lg);
+  --panel-shell-shadow: var(--shadow-xs);
+}
+
+/* Low Fatigue — soft radii, minimal shadows (nothing sharp for long sessions) */
+:root.low-fatigue {
+  --button-radius: var(--radius-lg);
+  --card-radius: var(--radius-xl);
+  --input-radius: var(--radius-md);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-xs);
+  --app-shell-radius: var(--radius-xl);
+  --panel-shell-radius: var(--radius-lg);
+  --panel-shell-shadow: var(--shadow-xs);
+}
+
+/* High Legibility — modest radii, flat surfaces; edges come from borders, not shadows */
+:root.high-legibility {
+  --button-radius: var(--radius-md);
+  --card-radius: var(--radius-lg);
+  --input-radius: var(--radius-md);
+  --button-shadow: var(--shadow-none);
+  --button-shadow-hover: var(--shadow-none);
+  --card-shadow: var(--shadow-none);
+  --modal-shadow: var(--shadow-lg);
+  --app-shell-radius: var(--radius-lg);
+  --panel-shell-radius: var(--radius-md);
+  --panel-shell-shadow: var(--shadow-none);
 }
