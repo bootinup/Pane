@@ -213,7 +213,7 @@ export function RemoteCreateSessionDialog({
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open && !submitting) onClose(); }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[70] bg-black/65" />
+        <Dialog.Overlay className="pane-scrim fixed inset-0 z-[70] bg-black/65" />
         <Dialog.Content
           asChild
           aria-describedby={undefined}
@@ -235,7 +235,7 @@ export function RemoteCreateSessionDialog({
           <form
             onSubmit={handleSubmit}
             aria-busy={loadingBranches || submitting}
-            className="fixed inset-x-0 bottom-0 z-[71] flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-xl border border-border-primary bg-surface-primary shadow-2xl outline-none sm:inset-auto sm:left-1/2 sm:top-1/2 sm:max-w-xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl"
+            className="pane-sheet fixed inset-x-0 bottom-0 z-[71] flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-xl border border-border-primary bg-surface-primary shadow-2xl outline-none sm:inset-auto sm:left-1/2 sm:top-1/2 sm:max-w-xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl"
           >
             <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</div>
         <div className="flex shrink-0 items-center justify-between border-b border-border-primary px-5 py-4">
@@ -359,7 +359,7 @@ export function RemoteCreateSessionDialog({
                   className="peer sr-only"
                   aria-label="Start pinned"
                 />
-                <span className={`absolute top-1 h-5 w-5 rounded-full bg-text-primary transition-transform ${startPinned ? 'translate-x-6' : 'translate-x-1'}`} />
+                <span className={`absolute top-1 h-5 w-5 rounded-full bg-text-on-interactive shadow-sm ring-1 ring-border-primary transition-transform ${startPinned ? 'translate-x-6' : 'translate-x-1'}`} />
               </span>
             </label>
           </section>
@@ -381,7 +381,7 @@ export function RemoteCreateSessionDialog({
                   className="peer sr-only"
                   aria-label="Use worktree"
                 />
-                <span className={`absolute top-1 h-5 w-5 rounded-full bg-text-primary transition-transform ${useWorktree ? 'translate-x-6' : 'translate-x-1'}`} />
+                <span className={`absolute top-1 h-5 w-5 rounded-full bg-text-on-interactive shadow-sm ring-1 ring-border-primary transition-transform ${useWorktree ? 'translate-x-6' : 'translate-x-1'}`} />
               </span>
             </label>
           </section>
