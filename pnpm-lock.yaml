@@ -6,7 +6,7 @@ settings:
 
 overrides:
   prebuild-install>node-abi: ^4.33.0
-  d3-array: ^3.2.0
+  d3-sankey>d3-array: ^3.2.0
 
 importers:
 
