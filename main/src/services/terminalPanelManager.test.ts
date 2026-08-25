@@ -163,7 +163,7 @@ describe('TerminalPanelManager terminal resize', () => {
     expect(terminal.pty.resize).not.toHaveBeenCalled();
 
     const redraw = manager.resizeTerminal(terminal.panelId, 80, 24, { force: true });
-    expect(terminal.pty.resize).toHaveBeenNthCalledWith(1, 79, 24);
+    expect(terminal.pty.resize).toHaveBeenNthCalledWith(1, 80, 23);
     expect(terminal.pty.resize).toHaveBeenCalledTimes(1);
 
     await vi.runAllTimersAsync();
