@@ -1,4 +1,5 @@
 import * as pty from '@lydell/node-pty';
+import { filterSyncBlockClears } from './syncBlockClearFilter';
 import { ToolPanel, TerminalPanelState } from '../../../shared/types/panels';
 import { getPaneDaemonEventSink, getPaneEventSink, getPtyHostRuntime, getRuntimeConfigManager, type PtyHandleLike, type PtyHostRuntime } from '../core/runtime';
 import { panelManager } from './panelManager';
@@ -217,6 +218,9 @@ interface TerminalProcess {
   agentType?: CliAgentType;
   // DEC Mode 2026 synchronized-output block tracking — persists across chunks
   inSyncBlock: boolean;
+  /** Alt-screen state as seen by filterSyncBlockClears (stream-ordered, may
+   *  differ transiently from isAlternateScreen which is chunk-granular). */
+  filterInAltScreen: boolean;
   capturedAgentSessionId?: string;
   agentSessionScrapeBuffer: string;
 }
@@ -1065,6 +1069,7 @@ export class TerminalPanelManager {
       activityStatus: 'idle',
       idleTimer: null,
       inSyncBlock: false,
+      filterInAltScreen: false,
       agentType: this.resolveTerminalAgentType(terminalCustomState(panel.state)),
       agentSessionScrapeBuffer: ''
     };
@@ -1189,45 +1194,9 @@ export class TerminalPanelManager {
     }
   }
 
-  /**
-   * Strips \x1b[2J (clear-screen) sequences that appear inside DEC Mode 2026
-   * synchronized-output blocks. Claude Code uses these blocks for full-screen
-   * redraws; the clear-screen causes xterm.js to reset scroll position, yanking
-   * users away from where they were reading. State (inSyncBlock) persists across
-   * chunk boundaries on the terminal object.
-   */
+  /** See syncBlockClearFilter.ts — state lives on the terminal object. */
   private filterSyncBlockClears(terminal: TerminalProcess, data: string): string {
-    const SYNC_START = '\x1b[?2026h';
-    const SYNC_END   = '\x1b[?2026l';
-    const CLEAR      = '\x1b[2J';
-
-    // Fast path: no sync sequences and not already inside a block
-    if (!terminal.inSyncBlock && !data.includes(SYNC_START)) {
-      return data;
-    }
-
-    let result = '';
-    let i = 0;
-
-    while (i < data.length) {
-      if (data.startsWith(SYNC_START, i)) {
-        terminal.inSyncBlock = true;
-        result += SYNC_START;
-        i += SYNC_START.length;
-      } else if (data.startsWith(SYNC_END, i)) {
-        terminal.inSyncBlock = false;
-        result += SYNC_END;
-        i += SYNC_END.length;
-      } else if (terminal.inSyncBlock && data.startsWith(CLEAR, i)) {
-        // Strip the clear-screen — scroll position preserved in xterm.js
-        i += CLEAR.length;
-      } else {
-        result += data[i];
-        i++;
-      }
-    }
-
-    return result;
+    return filterSyncBlockClears(terminal, data);
   }
 
   private setupTerminalHandlers(terminal: TerminalProcess): void {
@@ -1473,8 +1442,12 @@ export class TerminalPanelManager {
 
     try {
       if (options.force && isSameSize) {
-        const redrawCols = cols > MIN_PTY_COLS ? cols - 1 : cols + 1;
-        terminal.pty.resize(redrawCols, rows);
+        // Single repaint nudge: toggle ROWS (not cols) so the normal buffer never
+        // reflows, and keep the headless emulator in step so the intermediate
+        // frame is parsed at the geometry it was drawn for.
+        const redrawRows = rows > MIN_PTY_ROWS ? rows - 1 : rows + 1;
+        terminal.pty.resize(cols, redrawRows);
+        terminal.screenEmulator?.resize(cols, redrawRows);
         // Give the foreground process time to observe the intermediate grid.
         // Back-to-back TIOCSWINSZ calls can collapse into a single pending signal.
         await new Promise(resolve => setTimeout(resolve, FORCED_REDRAW_TRANSITION_MS));

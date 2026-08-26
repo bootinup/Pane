@@ -98,7 +98,6 @@ const DEFAULT_TERMINAL_FONT_SIZE = 14;
 const WEBGL_APP_BLUR_DETACH_DELAY_MS = 10_000;
 const REFOCUS_DELAYED_REFRESH_MS = 300;
 const TERMINAL_ACTIVATION_MASK_AFTER_PAINT_MS = 200;
-const FORCED_REDRAW_TRANSITION_MS = 50;
 const TERMINAL_VISIBILITY_REFRESH_MS = 60_000;
 const SNAPSHOT_MIN_INTERVAL_MS = 10_000;
 const MIN_VIABLE_RECT_PX = 100; // below this the container is hidden or mid-layout (Allotment minSize is 120)
@@ -227,7 +226,8 @@ function waitForNextPaint(): Promise<void> {
  * foreground-TUI redraw assumptions hidden by retained-DOM designs. Restoring
  * cells recreates terminal state but cannot make the application recompute its
  * layout, which is why the alternate-screen activation path finishes with a
- * timed real PTY size transition. The normal-buffer path deliberately does
+ * forced resize: main toggles the PTY rows once (renderer grid untouched) so
+ * the app gets a real SIGWINCH and repaints. The normal-buffer path deliberately does
  * NOT force one: the emulator serialization is already the exact current
  * screen, and forced width transitions made normal-buffer TUIs (Claude Code)
  * re-render their transcript tail — duplicating scrollback on every
@@ -660,6 +660,9 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
     // 120px minSize minus tab-bar chrome leaves a legitimately <100px-tall container.
     const rect = terminalRef.current.getBoundingClientRect();
     if (rect.width < MIN_VIABLE_RECT_PX) return;
+    const terminal = xtermRef.current;
+    const prevCols = terminal?.cols;
+    const prevRows = terminal?.rows;
     fitAddonRef.current.fit();
     const dimensions = fitAddonRef.current.proposeDimensions();
     if (
@@ -670,46 +673,24 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
       return;
     }
 
-    if (!force) {
-      await window.electronAPI.invoke(
-        'terminal:resize',
-        panel.id,
-        dimensions.cols,
-        dimensions.rows,
-        { force },
-      );
-      return;
+    // A dims change invalidates the renderer's cached rows; repaint the whole
+    // grid so WebGL never shows cells from the previous geometry.
+    if (terminal && (terminal.cols !== prevCols || terminal.rows !== prevRows) && terminal.rows > 0) {
+      terminal.refresh(0, terminal.rows - 1);
     }
 
-    const terminal = xtermRef.current;
-    if (!terminal) return;
-    const redrawCols = dimensions.cols > MIN_PTY_COLS ? dimensions.cols - 1 : dimensions.cols + 1;
-
-    try {
-      // Keep renderer and PTY geometry synchronized throughout the forced redraw.
-      // Full recovery/manual refresh already run under the opaque spinner mask.
-      terminal.resize(redrawCols, dimensions.rows);
-      await window.electronAPI.invoke(
-        'terminal:resize',
-        panel.id,
-        redrawCols,
-        dimensions.rows,
-      );
-      await new Promise(resolve => setTimeout(resolve, FORCED_REDRAW_TRANSITION_MS));
-      terminal.resize(dimensions.cols, dimensions.rows);
-      await window.electronAPI.invoke(
-        'terminal:resize',
-        panel.id,
-        dimensions.cols,
-        dimensions.rows,
-        { force },
-      );
-    } finally {
-      // An IPC failure must not strand the renderer at the redraw dimensions.
-      if (terminal.cols !== dimensions.cols || terminal.rows !== dimensions.rows) {
-        terminal.resize(dimensions.cols, dimensions.rows);
-      }
-    }
+    // The renderer grid always stays at the fitted size. A forced redraw is a
+    // main-side concern: main toggles the PTY through a one-row transition so
+    // the foreground app receives a real SIGWINCH, and its intermediate frame
+    // is overwritten by the final repaint. Doing the round trip here as well
+    // used to stack up to four SIGWINCHes per activation.
+    await window.electronAPI.invoke(
+      'terminal:resize',
+      panel.id,
+      dimensions.cols,
+      dimensions.rows,
+      { force },
+    );
   }, [panel.id]);
 
   // The terminal instance lives for the lifetime of a panel. Event handlers installed
@@ -785,9 +766,9 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
       const state = await window.electronAPI.invoke('terminal:getState', panel.id);
       if (state?.isAlternateScreen) {
         // Renderer refresh alone cannot repair an application frame that was
-        // restored before the visible grid settled. Move xterm and the PTY through
-        // the same one-column transition so the foreground app receives a real
-        // resize notification without a renderer/PTY geometry mismatch.
+        // restored before the visible grid settled. Ask main for a forced resize
+        // (single PTY row nudge) so the foreground app receives a real resize
+        // notification and repaints at the settled grid.
         await resizePtyToFit(true);
         if (terminal.rows > 0) {
           terminal.refresh(0, terminal.rows - 1);

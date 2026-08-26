@@ -8,7 +8,7 @@
 - When adding or changing CLI integrations, follow `docs/ADDING_NEW_CLI_TOOLS.md` and `docs/IMPLEMENTING_NEW_CLI_AGENTS.md`.
 
 ## Build, Test, and Development Commands
-- Dev app: `pnpm dev` (spawns frontend + Electron).
+- Dev app: `pnpm dev` (spawns frontend + Electron). The launcher waits for `tsc -w`'s first emit and re-bundles `main/dist/main/src/preload.js` with esbuild (the plain tsc emit cannot load in the sandboxed preload, which leaves the renderer on the browser fallback screen); it keeps re-bundling whenever tsc overwrites it.
 - Build all: `pnpm build` (frontend, main, then electron package).
 - Package (examples): `pnpm build:mac`, `pnpm build:linux`.
 - Lint: `pnpm lint`; Type-check: `pnpm typecheck` (runs per package). The root lint command is the single entry point for blocking Oxlint and Knip checks, residual ESLint, and advisory anti-slop checks.
