@@ -117,6 +117,48 @@ describe('estimateCostUsd', () => {
     expect(costUsd).toBe(0);
   });
 
+  it('reports incomplete when a live price contains a negative rate', () => {
+    setLivePrices(
+      [{ model: 'negative-model', inputPerMTok: 1, outputPerMTok: 2, cacheReadPerMTok: -1, cacheWritePerMTok: 1 }],
+      'stale cache',
+    );
+
+    const { costUsd, complete } = estimateCostUsd({
+      model: 'negative-model',
+      inputTokens: 1_000_000,
+      outputTokens: 1_000_000,
+      cacheReadTokens: 1_000_000,
+      cacheCreationTokens: 1_000_000,
+    });
+
+    expect(complete).toBe(false);
+    expect(costUsd).toBe(0);
+  });
+
+  it('does not price codex-auto-review through a negative auto router entry', () => {
+    setLivePrices(
+      [{
+        model: 'auto',
+        inputPerMTok: -1_000_000,
+        outputPerMTok: -1_000_000,
+        cacheReadPerMTok: -1_000_000,
+        cacheWritePerMTok: -1_000_000,
+      }],
+      'stale cache',
+    );
+
+    const { costUsd, complete } = estimateCostUsd({
+      model: 'codex-auto-review',
+      inputTokens: 100_000_000,
+      outputTokens: 10_000_000,
+      cacheReadTokens: 50_000_000,
+      cacheCreationTokens: 0,
+    });
+
+    expect(complete).toBe(false);
+    expect(costUsd).toBe(0);
+  });
+
   it('returns zero for zero tokens', () => {
     expect(estimateCostUsd({
       model: 'gpt-5',
