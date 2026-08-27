@@ -74,6 +74,118 @@ const report = {
     costIncomplete: false,
     cacheSavingsUsd: 9.87,
   }],
+  byPane: {
+    panes: [
+      {
+        paneId: 'pane-cost-engine',
+        paneName: 'Cost engine',
+        worktreePath: '/tmp/usage-fixture-cost-engine',
+        repoId: project.id,
+        archived: false,
+        createdAtMs: Date.UTC(2026, 7, 1),
+        inputTokens: 500_000,
+        outputTokens: 100_000,
+        cacheReadTokens: 2_000_000,
+        cacheCreationTokens: 50_000,
+        totalTokens: 2_650_000,
+        messageCount: 20,
+        estimatedCostUsd: 5.5,
+        costIncomplete: false,
+        cacheSavingsUsd: 4.5,
+        uncachedCostUsd: 5,
+        uncachedInputTokens: 500_000,
+        cacheHitRate: 0.8,
+        byModel: [
+          {
+            model: 'gpt-5.6-sol',
+            provider: 'codex',
+            inputTokens: 300_000,
+            outputTokens: 60_000,
+            cacheReadTokens: 1_200_000,
+            cacheCreationTokens: 30_000,
+            totalTokens: 1_590_000,
+            messageCount: 12,
+            estimatedCostUsd: 3.5,
+            costIncomplete: false,
+            cacheSavingsUsd: 2.8,
+          },
+          {
+            model: 'claude-sonnet-5',
+            provider: 'claude',
+            inputTokens: 200_000,
+            outputTokens: 40_000,
+            cacheReadTokens: 800_000,
+            cacheCreationTokens: 20_000,
+            totalTokens: 1_060_000,
+            messageCount: 8,
+            estimatedCostUsd: 2,
+            costIncomplete: false,
+            cacheSavingsUsd: 1.7,
+          },
+        ],
+      },
+      {
+        paneId: 'pane-docs',
+        paneName: 'Docs pane',
+        worktreePath: '/tmp/usage-fixture-docs',
+        repoId: project.id,
+        archived: true,
+        createdAtMs: Date.UTC(2026, 7, 2),
+        inputTokens: 600_000,
+        outputTokens: 180_000,
+        cacheReadTokens: 2_000_000,
+        cacheCreationTokens: 50_000,
+        totalTokens: 2_830_000,
+        messageCount: 18,
+        estimatedCostUsd: 6,
+        costIncomplete: false,
+        cacheSavingsUsd: 4.5,
+        uncachedCostUsd: 2,
+        uncachedInputTokens: 600_000,
+        cacheHitRate: 2_000_000 / 2_600_000,
+        byModel: [{
+          model: 'claude-opus-5',
+          provider: 'claude',
+          inputTokens: 600_000,
+          outputTokens: 180_000,
+          cacheReadTokens: 2_000_000,
+          cacheCreationTokens: 50_000,
+          totalTokens: 2_830_000,
+          messageCount: 18,
+          estimatedCostUsd: 6,
+          costIncomplete: false,
+          cacheSavingsUsd: 4.5,
+        }],
+      },
+    ],
+    unattributed: {
+      inputTokens: 100_000,
+      outputTokens: 20_000,
+      cacheReadTokens: 500_000,
+      cacheCreationTokens: 0,
+      totalTokens: 620_000,
+      messageCount: 4,
+      estimatedCostUsd: 0.84,
+      costIncomplete: false,
+      cacheSavingsUsd: 0.87,
+      uncachedCostUsd: 0.5,
+      uncachedInputTokens: 100_000,
+      cacheHitRate: 500_000 / 600_000,
+      byModel: [{
+        model: 'gpt-5.6-sol',
+        provider: 'codex',
+        inputTokens: 100_000,
+        outputTokens: 20_000,
+        cacheReadTokens: 500_000,
+        cacheCreationTokens: 0,
+        totalTokens: 620_000,
+        messageCount: 4,
+        estimatedCostUsd: 0.84,
+        costIncomplete: false,
+        cacheSavingsUsd: 0.87,
+      }],
+    },
+  },
   rateLimits: [{
     provider: 'codex',
     limitId: 'codex',
@@ -141,4 +253,34 @@ test('opens Usage & Limits from expanded and compact navigation', async ({ page 
   await expect(page.getByText('Token mix', { exact: true })).toBeVisible();
   await capture(page, testInfo, '02-usage-dashboard-compact-narrow.png');
   await expect(page.getByText('Something went wrong')).toHaveCount(0);
+});
+
+test('shows sortable per-pane costs, model breakdowns, and unattributed usage', async ({ page }, testInfo) => {
+  await installElectronApiMock(page, {
+    initialProjects: [project],
+    initialUsageReport: report,
+    activeProjectId: project.id,
+  });
+  await page.setViewportSize({ width: 1_600, height: 900 });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await page.getByTestId('usage-nav').click();
+
+  const section = page.getByTestId('usage-by-pane');
+  await expect(section).toBeVisible();
+  const rows = section.locator('tbody tr');
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0)).toContainText('Cost engine');
+  await expect(rows.nth(1)).toContainText('Docs pane');
+  await expect(rows.nth(1)).toContainText('archived');
+  await expect(section.getByText(/gpt-5\.6-sol · 1\.6M ·/)).toBeVisible();
+  await expect(section.getByText(/claude-sonnet-5 · 1\.1M ·/)).toBeVisible();
+  await expect(rows.nth(2)).toContainText('Unattributed');
+  await expect(rows.nth(2)).toContainText('$0.84');
+
+  await section.getByRole('button', { name: 'Total' }).click();
+  await expect(rows.nth(0)).toContainText('Docs pane');
+
+  const screenshotPath = testInfo.outputPath('03-usage-by-pane.png');
+  await section.screenshot({ path: screenshotPath });
+  await testInfo.attach('03-usage-by-pane.png', { path: screenshotPath, contentType: 'image/png' });
 });

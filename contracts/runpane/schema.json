@@ -349,6 +349,7 @@
         "repos add",
         "panes",
         "panes list",
+        "panes cost",
         "workspace",
         "workspace state",
         "watch",
@@ -403,6 +404,9 @@
           "$ref": "#/$defs/helpLines"
         },
         "panes list": {
+          "$ref": "#/$defs/helpLines"
+        },
+        "panes cost": {
           "$ref": "#/$defs/helpLines"
         },
         "workspace": {

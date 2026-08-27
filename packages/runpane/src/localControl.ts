@@ -137,6 +137,49 @@ interface PaneListResult {
   panes: PaneSummary[];
 }
 
+interface UsageTotalsResult {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;
+  messageCount: number;
+  estimatedCostUsd: number;
+  costIncomplete: boolean;
+  cacheSavingsUsd: number;
+}
+
+interface UsageByModelResult extends UsageTotalsResult {
+  model: string;
+  provider: 'claude' | 'codex';
+}
+
+interface PaneCostSliceResult extends UsageTotalsResult {
+  uncachedCostUsd: number;
+  uncachedInputTokens: number;
+  cacheHitRate: number;
+  byModel: UsageByModelResult[];
+}
+
+interface PaneCostEntryResult extends PaneCostSliceResult {
+  paneId: string;
+  paneName: string;
+  worktreePath: string;
+  repoId: number | null;
+  archived: boolean;
+  createdAtMs: number;
+}
+
+interface PaneCostResult {
+  ok: true;
+  fromMs: number;
+  toMs: number;
+  pricingAsOf: string;
+  panes: PaneCostEntryResult[];
+  unattributed?: PaneCostSliceResult;
+  totals?: UsageTotalsResult;
+}
+
 interface PaneArchiveRequest {
   paneId: string;
   force?: boolean;
@@ -602,6 +645,75 @@ const paneListResultSchema: BoundarySchema<PaneListResult> = boundary.object({
   repo: boundary.optional(repoSummarySchema),
   panes: boundary.array(paneSummarySchema),
 });
+const usageTotalsResultSchema: BoundarySchema<UsageTotalsResult> = boundary.object({
+  inputTokens: boundary.number,
+  outputTokens: boundary.number,
+  cacheReadTokens: boundary.number,
+  cacheCreationTokens: boundary.number,
+  totalTokens: boundary.number,
+  messageCount: boundary.number,
+  estimatedCostUsd: boundary.number,
+  costIncomplete: boundary.boolean,
+  cacheSavingsUsd: boundary.number,
+});
+const usageByModelResultSchema: BoundarySchema<UsageByModelResult> = boundary.object({
+  model: boundary.string,
+  provider: boundary.enumeration('claude', 'codex'),
+  inputTokens: boundary.number,
+  outputTokens: boundary.number,
+  cacheReadTokens: boundary.number,
+  cacheCreationTokens: boundary.number,
+  totalTokens: boundary.number,
+  messageCount: boundary.number,
+  estimatedCostUsd: boundary.number,
+  costIncomplete: boundary.boolean,
+  cacheSavingsUsd: boundary.number,
+});
+const paneCostSliceResultSchema: BoundarySchema<PaneCostSliceResult> = boundary.object({
+  inputTokens: boundary.number,
+  outputTokens: boundary.number,
+  cacheReadTokens: boundary.number,
+  cacheCreationTokens: boundary.number,
+  totalTokens: boundary.number,
+  messageCount: boundary.number,
+  estimatedCostUsd: boundary.number,
+  costIncomplete: boundary.boolean,
+  cacheSavingsUsd: boundary.number,
+  uncachedCostUsd: boundary.number,
+  uncachedInputTokens: boundary.number,
+  cacheHitRate: boundary.number,
+  byModel: boundary.array(usageByModelResultSchema),
+});
+const paneCostEntryResultSchema: BoundarySchema<PaneCostEntryResult> = boundary.object({
+  paneId: boundary.string,
+  paneName: boundary.string,
+  worktreePath: boundary.string,
+  repoId: boundary.nullable(boundary.number),
+  archived: boundary.boolean,
+  createdAtMs: boundary.number,
+  inputTokens: boundary.number,
+  outputTokens: boundary.number,
+  cacheReadTokens: boundary.number,
+  cacheCreationTokens: boundary.number,
+  totalTokens: boundary.number,
+  messageCount: boundary.number,
+  estimatedCostUsd: boundary.number,
+  costIncomplete: boundary.boolean,
+  cacheSavingsUsd: boundary.number,
+  uncachedCostUsd: boundary.number,
+  uncachedInputTokens: boundary.number,
+  cacheHitRate: boundary.number,
+  byModel: boundary.array(usageByModelResultSchema),
+});
+const paneCostResultSchema: BoundarySchema<PaneCostResult> = boundary.object({
+  ok: boundary.literal(true),
+  fromMs: boundary.number,
+  toMs: boundary.number,
+  pricingAsOf: boundary.string,
+  panes: boundary.array(paneCostEntryResultSchema),
+  unattributed: boundary.optional(paneCostSliceResultSchema),
+  totals: boundary.optional(usageTotalsResultSchema),
+});
 const paneCreateResultSchema: BoundarySchema<PaneCreateResult> = boundary.object({
   ok: boundary.boolean,
   generation: boundary.optional(boundary.number),
@@ -949,6 +1061,23 @@ export async function runPanesList(parsed: ParsedArgs): Promise<number> {
   }
 
   printPaneListResult(result);
+  return 0;
+}
+
+export async function runPanesCost(parsed: ParsedArgs): Promise<number> {
+  const result = await invokeDaemon('runpane:panes:cost', [{
+    repo: parsed.repo,
+    paneId: parsed.paneId,
+  }], paneCostResultSchema, {
+    paneDir: parsed.paneDir,
+  });
+
+  if (parsed.json) {
+    printJson(result);
+    return 0;
+  }
+
+  printPaneCostResult(result);
   return 0;
 }
 
@@ -1778,6 +1907,27 @@ function printPaneListResult(result: PaneListResult): void {
     const repo = pane.repoName ? ` ${pane.repoName}` : '';
     const pinned = pane.pinned ? ' pinned' : '';
     console.log(`${pane.id}\t${pane.name}\t${pane.status}${pinned}\t${pane.panelCount} panels\t${pane.worktreePath}${repo}`);
+  }
+}
+
+function printPaneCostResult(result: PaneCostResult): void {
+  for (const pane of result.panes) {
+    console.log(`${pane.paneId}\t${pane.paneName}\t$${pane.uncachedCostUsd.toFixed(4)} uncached\t$${pane.estimatedCostUsd.toFixed(4)} total\t${Math.round(pane.cacheHitRate * 100)}% hit`);
+    printPaneCostModels(pane.byModel);
+  }
+  if (result.unattributed) {
+    console.log(`Unattributed\t$${result.unattributed.uncachedCostUsd.toFixed(4)} uncached\t$${result.unattributed.estimatedCostUsd.toFixed(4)} total\t${Math.round(result.unattributed.cacheHitRate * 100)}% hit`);
+    printPaneCostModels(result.unattributed.byModel);
+  }
+  if (result.totals) {
+    console.log(`Total\t$${result.totals.estimatedCostUsd.toFixed(4)}\t${result.totals.totalTokens} tokens`);
+  }
+}
+
+function printPaneCostModels(models: UsageByModelResult[]): void {
+  for (const model of models) {
+    const cost = model.costIncomplete ? 'n/a' : `$${model.estimatedCostUsd.toFixed(4)}`;
+    console.log(`  ${model.model}\t${model.totalTokens} tokens\t${cost}`);
   }
 }
 

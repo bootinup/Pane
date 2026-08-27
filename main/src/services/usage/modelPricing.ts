@@ -109,6 +109,7 @@ interface CostEstimate {
   costUsd: number;
   complete: boolean;
   cacheSavingsUsd: number;
+  cacheReadCostUsd: number;
 }
 
 /**
@@ -122,7 +123,7 @@ export function estimateCostUsd(
   input: CostInput
 ): CostEstimate {
   const price = findModelPrice(input.model);
-  if (!price || hasNegativeRate(price)) return { costUsd: 0, complete: false, cacheSavingsUsd: 0 };
+  if (!price || hasNegativeRate(price)) return { costUsd: 0, complete: false, cacheSavingsUsd: 0, cacheReadCostUsd: 0 };
 
   const perToken = 1_000_000;
   const costUsd =
@@ -135,8 +136,9 @@ export function estimateCostUsd(
     input.cacheReadTokens * (price.inputPerMTok - price.cacheReadPerMTok) / perToken,
     0
   );
+  const cacheReadCostUsd = input.cacheReadTokens * price.cacheReadPerMTok / perToken;
 
-  return { costUsd, complete: true, cacheSavingsUsd };
+  return { costUsd, complete: true, cacheSavingsUsd, cacheReadCostUsd };
 }
 
 function hasNegativeRate(price: ModelPrice): boolean {

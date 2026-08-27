@@ -3,6 +3,7 @@ import type { RunpaneAgent } from './generatedRunpaneContract';
 import type { RemoteDaemonExecutableHealth } from './remoteDaemon';
 import type { TerminalGraphicsProtocol } from '../constants/terminalGraphics';
 import type { AgentState } from './agentStatus';
+import type { UsageByPane, UsagePaneCostSlice, UsageTotals } from './usage';
 
 export type RunpaneAgentId = RunpaneAgent;
 
@@ -321,6 +322,21 @@ export interface RunpanePaneListResult {
   ok: true;
   repo?: RunpaneRepoSummary;
   panes: RunpanePaneSummary[];
+}
+
+export interface RunpanePaneCostRequest {
+  repo?: RunpaneRepoSelector;
+  paneId?: string;
+}
+
+export interface RunpanePaneCostResult {
+  ok: true;
+  fromMs: number;
+  toMs: number;
+  pricingAsOf: string;
+  panes: UsageByPane[];
+  unattributed?: UsagePaneCostSlice;
+  totals?: UsageTotals;
 }
 
 export interface RunpanePanePinRequest {

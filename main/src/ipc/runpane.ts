@@ -36,6 +36,8 @@ import type {
   RunpanePaneArchiveResult,
   RunpanePaneArchiveSafetyCheck,
   RunpanePaneArchiveSuccessResult,
+  RunpanePaneCostRequest,
+  RunpanePaneCostResult,
   RunpanePaneListRequest,
   RunpanePaneListResult,
   RunpanePanePinRequest,
@@ -91,12 +93,14 @@ import { collectRemoteDaemonExecutableHealth } from '../daemon/remoteDaemonExecu
 import { WorkspaceJournal, type WorkspaceJournalFilter } from '../services/workspaceJournal';
 import { WorkspaceStateReader } from '../services/workspaceStateReader';
 import { WorkspaceCursorStore } from '../services/workspaceCursorStore';
+import { usageManager } from '../services/usage/usageManager';
 
 const RUNPANE_CHANNELS = [
   'runpane:doctor',
   'runpane:repos:list',
   'runpane:repos:add',
   'runpane:panes:list',
+  'runpane:panes:cost',
   'runpane:panes:create',
   'runpane:panes:pin',
   'runpane:panes:rename',
@@ -298,6 +302,54 @@ export function registerRunpaneHandlers(
         panes,
       };
     }, result => ({ repoId: result.repo?.id, resultCount: result.panes.length }));
+  });
+
+  commandRegistry.register('runpane:panes:cost', async (request: PaneCommandValue = {}): Promise<RunpanePaneCostResult> => {
+    let repoId: number | undefined;
+    return withRunpaneAction(services, 'panes:cost', {}, (): RunpanePaneCostResult => {
+      const normalized = parsePaneCostRequest(request);
+      const report = usageManager.getPaneCosts();
+      let panes = report.byPane.panes;
+
+      if (normalized.paneId) {
+        const pane = panes.find(entry => entry.paneId === normalized.paneId);
+        if (pane) {
+          panes = [pane];
+        } else {
+          const session = databaseService.getSession(normalized.paneId);
+          if (!session) throw new Error(`No Pane pane found with id ${normalized.paneId}`);
+          panes = [{
+            paneId: session.id,
+            paneName: session.name,
+            worktreePath: session.worktree_path,
+            repoId: session.project_id ?? null,
+            archived: session.archived === true,
+            createdAtMs: Date.parse(session.created_at),
+            ...emptyPaneCostSlice(),
+          }];
+        }
+      }
+
+      if (normalized.repo) {
+        const project = resolveRepoSelector(databaseService.getAllProjects(), normalized.repo);
+        repoId = project.id;
+        panes = panes.filter(pane => pane.repoId === project.id);
+      }
+
+      const scoped = normalized.paneId !== undefined || normalized.repo !== undefined;
+      const result: RunpanePaneCostResult = {
+        ok: true,
+        fromMs: report.fromMs,
+        toMs: report.toMs,
+        pricingAsOf: report.pricingAsOf,
+        panes,
+      };
+      if (!scoped) {
+        result.unattributed = report.byPane.unattributed;
+        result.totals = report.totals;
+      }
+      return result;
+    }, result => ({ repoId, resultCount: result.panes.length }));
   });
 
   commandRegistry.register('runpane:panes:pin', async (request: PaneCommandValue): Promise<RunpanePanePinResult> => {
@@ -1932,6 +1984,39 @@ function parsePaneListRequest(value: PaneCommandValue): RunpanePaneListRequest {
 
   return {
     repo: parseRepoSelector(value.repo),
+  };
+}
+
+function parsePaneCostRequest(value: PaneCommandValue): RunpanePaneCostRequest {
+  if (value === undefined || value === null) return {};
+  if (!isRecord(value)) throw new Error('Pane cost request must be an object');
+  const paneId = optionalString(value.paneId)?.trim();
+  if (value.paneId !== undefined && !paneId) {
+    throw new Error('Pane cost paneId must be a non-empty string');
+  }
+  return {
+    repo: value.repo === undefined || value.repo === null || value.repo === ''
+      ? undefined
+      : parseRepoSelector(value.repo),
+    paneId,
+  };
+}
+
+function emptyPaneCostSlice() {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    totalTokens: 0,
+    messageCount: 0,
+    estimatedCostUsd: 0,
+    costIncomplete: false,
+    cacheSavingsUsd: 0,
+    uncachedCostUsd: 0,
+    uncachedInputTokens: 0,
+    cacheHitRate: 0,
+    byModel: [],
   };
 }
 

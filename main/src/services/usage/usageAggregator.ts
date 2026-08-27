@@ -2,6 +2,8 @@ import { basename } from 'path';
 import type { Database } from 'better-sqlite3-multiple-ciphers';
 import {
   type UsageBucket,
+  type UsageByPane,
+  type UsageByPaneReport,
   type UsageByModel,
   type UsageByProject,
   type UsageProvider,
@@ -25,6 +27,24 @@ interface TokenRow {
 
 interface BucketRow extends TokenRow {
   bucket_start_ms: number;
+}
+
+interface PaneTokenRow extends TokenRow {
+  pane_id: string | null;
+}
+
+interface PaneRow {
+  id: string;
+  name: string;
+  worktree_path: string;
+  project_id: number | null;
+  archived: number | null;
+  created_at_ms: number;
+}
+
+interface FoldedCostSummary {
+  totals: UsageTotals;
+  cacheReadCostUsd: number;
 }
 
 interface ProviderFilter {
@@ -56,8 +76,9 @@ function emptyTotals(): UsageTotals {
  * Fold per-model rows into one total, pricing each model separately — a single
  * blended rate would be wrong whenever a range mixes Opus and Haiku traffic.
  */
-function foldTotals(rows: TokenRow[]): UsageTotals {
+function foldCostSummary(rows: TokenRow[]): FoldedCostSummary {
   const totals = emptyTotals();
+  let cacheReadCostUsd = 0;
 
   for (const row of rows) {
     totals.inputTokens += row.input_tokens;
@@ -66,21 +87,45 @@ function foldTotals(rows: TokenRow[]): UsageTotals {
     totals.cacheCreationTokens += row.cache_creation_tokens;
     totals.messageCount += row.message_count;
 
-    const { costUsd, complete, cacheSavingsUsd } = estimateCostUsd({
+    const estimate = estimateCostUsd({
       model: row.model,
       inputTokens: row.input_tokens,
       outputTokens: row.output_tokens,
       cacheReadTokens: row.cache_read_tokens,
       cacheCreationTokens: row.cache_creation_tokens,
     });
-    totals.estimatedCostUsd += costUsd;
-    totals.cacheSavingsUsd += cacheSavingsUsd;
-    if (!complete) totals.costIncomplete = true;
+    totals.estimatedCostUsd += estimate.costUsd;
+    totals.cacheSavingsUsd += estimate.cacheSavingsUsd;
+    cacheReadCostUsd += estimate.cacheReadCostUsd;
+    if (!estimate.complete) totals.costIncomplete = true;
   }
 
   totals.totalTokens =
     totals.inputTokens + totals.outputTokens + totals.cacheReadTokens + totals.cacheCreationTokens;
-  return totals;
+  return { totals, cacheReadCostUsd };
+}
+
+function foldTotals(rows: TokenRow[]): UsageTotals {
+  return foldCostSummary(rows).totals;
+}
+
+function foldPaneSlice(rows: TokenRow[]) {
+  const { totals, cacheReadCostUsd } = foldCostSummary(rows);
+  const denominator = totals.inputTokens + totals.cacheReadTokens;
+  const byModel = rows
+    .map(row => ({
+      model: row.model,
+      provider: row.provider === 'codex' ? 'codex' as const : 'claude' as const,
+      ...foldTotals([row]),
+    }))
+    .sort((a, b) => b.estimatedCostUsd - a.estimatedCostUsd);
+  return {
+    ...totals,
+    uncachedCostUsd: totals.estimatedCostUsd - cacheReadCostUsd,
+    uncachedInputTokens: totals.inputTokens,
+    cacheHitRate: denominator > 0 ? totals.cacheReadTokens / denominator : 0,
+    byModel,
+  };
 }
 
 const AGGREGATE_COLUMNS = `
@@ -151,6 +196,99 @@ export class UsageAggregator {
         ...foldTotals(pathRows),
       }))
       .sort((a, b) => b.totalTokens - a.totalTokens);
+  }
+
+  getByPane(fromMs: number, toMs: number, providers?: UsageProvider[]): UsageByPaneReport {
+    const { clause, params } = this.providerFilter(providers);
+    // SAFETY: The projection aliases the pane id and every TokenRow field.
+    const rows = this.db.prepare(`
+      SELECT pane_id, ${AGGREGATE_COLUMNS}
+      FROM (
+        SELECT
+          e.model,
+          e.provider,
+          e.input_tokens,
+          e.output_tokens,
+          e.cache_read_tokens,
+          e.cache_creation_tokens,
+          (
+            SELECT s.id
+            FROM sessions s
+            WHERE s.worktree_path = e.cwd
+              AND e.timestamp_ms >= CAST(strftime('%s', s.created_at) AS INTEGER) * 1000
+              AND (
+                s.archived IS NULL OR s.archived = 0
+                OR e.timestamp_ms <= CAST(strftime('%s', s.updated_at) AS INTEGER) * 1000 + 999
+              )
+            ORDER BY CAST(strftime('%s', s.created_at) AS INTEGER) DESC, s.id
+            LIMIT 1
+          ) AS pane_id
+        FROM usage_events e
+        WHERE e.timestamp_ms >= ? AND e.timestamp_ms <= ? ${clause}
+      )
+      GROUP BY pane_id, model, provider
+    `).all(fromMs, toMs, ...params) as PaneTokenRow[];
+
+    const rowsByPane = new Map<string, TokenRow[]>();
+    const unattributedRows: TokenRow[] = [];
+    for (const row of rows) {
+      if (row.pane_id === null) {
+        unattributedRows.push(row);
+        continue;
+      }
+      const paneRows = rowsByPane.get(row.pane_id);
+      if (paneRows) paneRows.push(row);
+      else rowsByPane.set(row.pane_id, [row]);
+    }
+
+    // SAFETY: The fixed roster projection is represented by PaneRow.
+    const roster = this.db.prepare(`
+      SELECT
+        id,
+        name,
+        worktree_path,
+        project_id,
+        archived,
+        CAST(strftime('%s', created_at) AS INTEGER) * 1000 AS created_at_ms
+      FROM sessions
+      WHERE CAST(strftime('%s', created_at) AS INTEGER) * 1000 <= ?
+        AND (
+          archived IS NULL OR archived = 0
+          OR CAST(strftime('%s', updated_at) AS INTEGER) * 1000 + 999 >= ?
+        )
+    `).all(toMs, fromMs) as PaneRow[];
+
+    const rosterById = new Map(roster.map(pane => [pane.id, pane]));
+    for (const paneId of rowsByPane.keys()) {
+      if (rosterById.has(paneId)) continue;
+      // SAFETY: The fixed by-id projection is represented by PaneRow and may return no row.
+      const pane = this.db.prepare(`
+        SELECT
+          id,
+          name,
+          worktree_path,
+          project_id,
+          archived,
+          CAST(strftime('%s', created_at) AS INTEGER) * 1000 AS created_at_ms
+        FROM sessions
+        WHERE id = ?
+      `).get(paneId) as PaneRow | undefined;
+      if (pane) rosterById.set(pane.id, pane);
+    }
+
+    const panes: UsageByPane[] = [...rosterById.values()]
+      .map(pane => ({
+        paneId: pane.id,
+        paneName: pane.name,
+        worktreePath: pane.worktree_path,
+        repoId: pane.project_id,
+        archived: pane.archived === 1,
+        createdAtMs: pane.created_at_ms,
+        ...foldPaneSlice(rowsByPane.get(pane.id) ?? []),
+      }))
+      .sort((a, b) => b.uncachedCostUsd - a.uncachedCostUsd || a.paneName.localeCompare(b.paneName));
+
+    return { panes, unattributed: foldPaneSlice(unattributedRows) };
   }
 
   getTotals(fromMs: number, toMs: number, providers?: UsageProvider[]): UsageTotals {

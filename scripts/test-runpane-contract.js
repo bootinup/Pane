@@ -1247,6 +1247,123 @@ print(json.dumps({"calls": calls, "stdout": stdout.getvalue().splitlines(), "ref
   assert.strictEqual(python.pinConflictRefused, true);
 }
 
+async function checkPanesCostParity() {
+  const daemonClient = require(path.join(rootDir, 'packages', 'runpane', 'dist', 'daemonClient.js'));
+  const { parseRunpaneArgs } = require(path.join(rootDir, 'packages', 'runpane', 'dist', 'commands.js'));
+  const { runPanesCost } = require(path.join(rootDir, 'packages', 'runpane', 'dist', 'localControl.js'));
+  const totals = {
+    inputTokens: 100,
+    outputTokens: 20,
+    cacheReadTokens: 50,
+    cacheCreationTokens: 0,
+    totalTokens: 170,
+    messageCount: 1,
+    estimatedCostUsd: 0.004,
+    costIncomplete: false,
+    cacheSavingsUsd: 0.0001,
+  };
+  const model = { ...totals, model: 'claude-sonnet-5', provider: 'claude' };
+  const payload = {
+    ok: true,
+    fromMs: 1,
+    toMs: 2,
+    pricingAsOf: 'test',
+    panes: [{
+      ...totals,
+      paneId: 'p1',
+      paneName: 'Pane one',
+      worktreePath: '/tmp/p1',
+      repoId: 1,
+      archived: false,
+      createdAtMs: 1,
+      uncachedCostUsd: 0.003,
+      uncachedInputTokens: 100,
+      cacheHitRate: 0.25,
+      byModel: [model],
+    }],
+    unattributed: {
+      ...totals,
+      uncachedCostUsd: 0.003,
+      uncachedInputTokens: 100,
+      cacheHitRate: 0.25,
+      byModel: [model],
+    },
+    totals,
+  };
+  const originalInvokeDaemon = daemonClient.invokeDaemon;
+  const originalConsoleLog = console.log;
+  const calls = [];
+  const jsonOutputs = [];
+  const textOutput = [];
+  daemonClient.invokeDaemon = async (channel, args) => {
+    calls.push({ channel, request: args[0] });
+    return payload;
+  };
+  try {
+    for (const args of [
+      ['panes', 'cost', '--json'],
+      ['panes', 'cost', '--pane', 'p1', '--json'],
+      ['panes', 'cost', '--repo', 'active', '--json'],
+    ]) {
+      console.log = line => jsonOutputs.push(String(line));
+      await runPanesCost(parseRunpaneArgs(args));
+    }
+    console.log = line => textOutput.push(String(line));
+    await runPanesCost(parseRunpaneArgs(['panes', 'cost']));
+  } finally {
+    daemonClient.invokeDaemon = originalInvokeDaemon;
+    console.log = originalConsoleLog;
+  }
+
+  const python = JSON.parse(runPythonSnippet(`
+import contextlib
+import io
+import json
+import runpane.local_control as local_control
+from runpane.cli import parse_args
+
+payload = json.loads(${JSON.stringify(JSON.stringify(payload))})
+calls = []
+def fake_invoke(channel, args, **kwargs):
+    calls.append({"channel": channel, "request": args[0]})
+    return payload
+
+local_control.invoke_daemon = fake_invoke
+json_outputs = []
+for args in [
+    ["panes", "cost", "--json"],
+    ["panes", "cost", "--pane", "p1", "--json"],
+    ["panes", "cost", "--repo", "active", "--json"],
+]:
+    stdout = io.StringIO()
+    with contextlib.redirect_stdout(stdout):
+        local_control.run_panes_cost(parse_args(args))
+    json_outputs.append(stdout.getvalue().rstrip("\\n"))
+
+stdout = io.StringIO()
+with contextlib.redirect_stdout(stdout):
+    local_control.run_panes_cost(parse_args(["panes", "cost"]))
+print(json.dumps({"calls": calls, "jsonOutputs": json_outputs, "textOutput": stdout.getvalue().splitlines()}))
+`));
+
+  assert.strictEqual(calls.length, 4);
+  assert.ok(calls.every(call => call.channel === 'runpane:panes:cost'));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(calls.slice(0, 3))), [
+    { channel: 'runpane:panes:cost', request: {} },
+    { channel: 'runpane:panes:cost', request: { paneId: 'p1' } },
+    { channel: 'runpane:panes:cost', request: { repo: 'active' } },
+  ]);
+  assert.deepStrictEqual(python.calls.slice(0, 3), [
+    { channel: 'runpane:panes:cost', request: { repo: null, paneId: null } },
+    { channel: 'runpane:panes:cost', request: { repo: null, paneId: 'p1' } },
+    { channel: 'runpane:panes:cost', request: { repo: 'active', paneId: null } },
+  ]);
+  assert.deepStrictEqual(python.jsonOutputs, jsonOutputs);
+  assert.ok(textOutput.some(line => line.includes('p1\tPane one')));
+  assert.ok(textOutput.some(line => line.includes('  claude-sonnet-5')));
+  assert.deepStrictEqual(python.textOutput, textOutput);
+}
+
 async function checkPaneArchiveDryRunParity() {
   const daemonClient = require(path.join(rootDir, 'packages', 'runpane', 'dist', 'daemonClient.js'));
   const { parseRunpaneArgs } = require(path.join(rootDir, 'packages', 'runpane', 'dist', 'commands.js'));
@@ -1715,6 +1832,7 @@ async function runChecks() {
   await checkFromJsonAcceptsBom();
   await checkPaneArchiveDryRunParity();
   await checkPanePinParity();
+  await checkPanesCostParity();
   await checkPaneRenameParity();
   await checkAgentTemplateParity();
   checkHelpOutput();

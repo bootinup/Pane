@@ -487,6 +487,7 @@ function isRunpaneLocalCommand(command: RunpaneCommand): boolean {
     || command === 'repos list'
     || command === 'repos add'
     || command === 'panes list'
+    || command === 'panes cost'
     || command === 'panes create'
     || command === 'panes archive'
     || command === 'panes pin'

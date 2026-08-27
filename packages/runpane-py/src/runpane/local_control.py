@@ -55,6 +55,20 @@ def run_panes_list(parsed: Any) -> int:
     return 0
 
 
+def run_panes_cost(parsed: Any) -> int:
+    result = invoke_daemon("runpane:panes:cost", [{
+        "repo": parsed.repo,
+        "paneId": parsed.pane_id,
+    }], pane_dir=parsed.pane_dir)
+
+    if parsed.json:
+        print_json(result)
+        return 0
+
+    print_pane_cost_result(result)
+    return 0
+
+
 def run_workspace_state(parsed: Any) -> int:
     result = invoke_daemon(
         "runpane:workspace:state",
@@ -736,6 +750,27 @@ def print_pane_list_result(result: Dict[str, Any]) -> None:
         repo = f" {pane.get('repoName')}" if pane.get("repoName") else ""
         pinned = " pinned" if pane.get("pinned") else ""
         print(f"{pane.get('id')}\t{pane.get('name')}\t{pane.get('status')}{pinned}\t{pane.get('panelCount')} panels\t{pane.get('worktreePath')}{repo}")
+
+
+def print_pane_cost_result(result: Dict[str, Any]) -> None:
+    for pane in result.get("panes", []):
+        hit_rate = int(pane.get("cacheHitRate", 0) * 100 + 0.5)
+        print(f"{pane.get('paneId')}\t{pane.get('paneName')}\t${pane.get('uncachedCostUsd', 0):.4f} uncached\t${pane.get('estimatedCostUsd', 0):.4f} total\t{hit_rate}% hit")
+        print_pane_cost_models(pane.get("byModel", []))
+    unattributed = result.get("unattributed")
+    if unattributed:
+        hit_rate = int(unattributed.get("cacheHitRate", 0) * 100 + 0.5)
+        print(f"Unattributed\t${unattributed.get('uncachedCostUsd', 0):.4f} uncached\t${unattributed.get('estimatedCostUsd', 0):.4f} total\t{hit_rate}% hit")
+        print_pane_cost_models(unattributed.get("byModel", []))
+    totals = result.get("totals")
+    if totals:
+        print(f"Total\t${totals.get('estimatedCostUsd', 0):.4f}\t{totals.get('totalTokens', 0)} tokens")
+
+
+def print_pane_cost_models(models: list[Dict[str, Any]]) -> None:
+    for model in models:
+        cost = "n/a" if model.get("costIncomplete") else f"${model.get('estimatedCostUsd', 0):.4f}"
+        print(f"  {model.get('model')}\t{model.get('totalTokens', 0)} tokens\t{cost}")
 
 
 def print_pane_create_result(result: Dict[str, Any]) -> None:

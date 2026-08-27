@@ -16,6 +16,7 @@ import { terminalPanelManager } from '../services/terminalPanelManager';
 import { ArchiveProgressManager } from '../services/archiveProgressManager';
 import { WorkspaceJournal } from '../services/workspaceJournal';
 import { WorkspaceCursorStore } from '../services/workspaceCursorStore';
+import { usageManager } from '../services/usage/usageManager';
 import { CommandRunner } from '../utils/commandRunner';
 import { registerRunpaneHandlers } from './runpane';
 
@@ -33,6 +34,7 @@ vi.spyOn(terminalPanelManager, 'getLastOutputAt');
 vi.spyOn(terminalPanelManager, 'getOutputGeneration');
 vi.spyOn(terminalPanelManager, 'deliverPendingInitialInput');
 vi.spyOn(terminalPanelManager, 'getAgentStatus');
+vi.spyOn(usageManager, 'getPaneCosts');
 
 const project: Project = {
   id: 1,
@@ -53,6 +55,58 @@ const session: Session = {
   output: [],
   jsonMessages: [],
   projectId: project.id,
+};
+
+const zeroUsageTotals = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  totalTokens: 0,
+  messageCount: 0,
+  estimatedCostUsd: 0,
+  costIncomplete: false,
+  cacheSavingsUsd: 0,
+};
+
+const paneCostOne = {
+  ...zeroUsageTotals,
+  paneId: session.id,
+  paneName: session.name,
+  worktreePath: session.worktreePath,
+  repoId: project.id,
+  archived: false,
+  createdAtMs: session.createdAt.getTime(),
+  inputTokens: 100,
+  totalTokens: 100,
+  messageCount: 1,
+  estimatedCostUsd: 0.003,
+  uncachedCostUsd: 0.003,
+  uncachedInputTokens: 100,
+  cacheHitRate: 0,
+  byModel: [{
+    ...zeroUsageTotals,
+    model: 'claude-sonnet-5',
+    provider: 'claude' as const,
+    inputTokens: 100,
+    totalTokens: 100,
+    messageCount: 1,
+    estimatedCostUsd: 0.003,
+  }],
+};
+
+const paneCostTwo = {
+  ...zeroUsageTotals,
+  paneId: 'session-2',
+  paneName: 'Other repo',
+  worktreePath: '/repo/other-worktrees/task',
+  repoId: 2,
+  archived: true,
+  createdAtMs: Date.parse('2026-01-02T00:00:00.000Z'),
+  uncachedCostUsd: 0,
+  uncachedInputTokens: 0,
+  cacheHitRate: 0,
+  byModel: [],
 };
 
 const terminalPanel: ToolPanel = {
@@ -241,6 +295,22 @@ describe('runpane IPC handlers', () => {
     vi.mocked(terminalPanelManager.getAgentStatus).mockReset();
     vi.mocked(terminalPanelManager.getOutputGeneration).mockReturnValue(0);
     vi.mocked(terminalPanelManager.getAgentStatus).mockReturnValue('idle');
+    vi.mocked(usageManager.getPaneCosts).mockReturnValue({
+      fromMs: Date.parse('2025-12-01T00:00:00.000Z'),
+      toMs: Date.parse('2026-01-03T00:00:00.000Z'),
+      pricingAsOf: 'bundled · 2026-08-26',
+      byPane: {
+        panes: [paneCostOne, paneCostTwo],
+        unattributed: {
+          ...zeroUsageTotals,
+          uncachedCostUsd: 0,
+          uncachedInputTokens: 0,
+          cacheHitRate: 0,
+          byModel: [],
+        },
+      },
+      totals: paneCostOne,
+    });
 
     vi.mocked(panelManager.getPanel).mockImplementation((panelId: string) =>
       panelId === terminalPanel.id ? terminalPanel : undefined
@@ -685,6 +755,69 @@ describe('runpane IPC handlers', () => {
         result_count: 1,
       }),
     );
+  });
+
+  it('reports pane costs with totals and analytics in the unscoped form', async () => {
+    const services = createServices();
+    const registry = createRegistry(services);
+    const result = await registry.invoke('runpane:panes:cost', [{}]);
+
+    expect(result).toMatchObject({
+      ok: true,
+      panes: [paneCostOne, paneCostTwo],
+      unattributed: expect.any(Object),
+      totals: expect.any(Object),
+    });
+    expect(services.analyticsManager?.track).toHaveBeenCalledWith(
+      'runpane_local_control',
+      expect.objectContaining({ action: 'panes:cost', status: 'success', result_count: 2 }),
+    );
+  });
+
+  it('returns only the requested pane without workspace totals', async () => {
+    const registry = createRegistry();
+    const result = await registry.invoke('runpane:panes:cost', [{ paneId: session.id }]);
+
+    expect(result).toMatchObject({ ok: true, panes: [paneCostOne] });
+    expect(result).not.toHaveProperty('unattributed');
+    expect(result).not.toHaveProperty('totals');
+  });
+
+  it('zero-fills a known pane outside the report window', async () => {
+    const outside = { ...session, id: 'outside', name: 'Outside', archived: true };
+    const services = createServices({
+      // SAFETY: This fixture preserves the default service shape and overrides only the tested lookup.
+      databaseService: {
+        ...createServices().databaseService,
+        getSession: vi.fn(() => outside),
+      } as AppServices['databaseService'],
+    });
+    const result = await createRegistry(services).invoke('runpane:panes:cost', [{ paneId: outside.id }]);
+
+    expect(result).toMatchObject({
+      panes: [{ paneId: outside.id, paneName: outside.name, totalTokens: 0, byModel: [] }],
+    });
+  });
+
+  it('rejects an unknown pane id', async () => {
+    const services = createServices({
+      // SAFETY: This fixture preserves the default service shape and overrides only the tested lookup.
+      databaseService: {
+        ...createServices().databaseService,
+        getSession: vi.fn(() => undefined),
+      } as AppServices['databaseService'],
+    });
+
+    await expect(createRegistry(services).invoke('runpane:panes:cost', [{ paneId: 'missing' }]))
+      .rejects.toThrow('No Pane pane found with id missing');
+  });
+
+  it('scopes pane costs to a repository and omits workspace totals', async () => {
+    const result = await createRegistry().invoke('runpane:panes:cost', [{ repo: 'active' }]);
+
+    expect(result).toMatchObject({ ok: true, panes: [paneCostOne] });
+    expect(result).not.toHaveProperty('unattributed');
+    expect(result).not.toHaveProperty('totals');
   });
 
   it('lists panels for a pane', async () => {

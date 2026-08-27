@@ -64,6 +64,32 @@ export interface UsageByModel extends UsageTotals {
   provider: UsageProvider;
 }
 
+export interface UsagePaneCostSlice extends UsageTotals {
+  uncachedCostUsd: number;
+  uncachedInputTokens: number;
+  cacheHitRate: number;
+  byModel: UsageByModel[];
+}
+
+/**
+ * Usage attributed to one Pane by matching an event's cwd to its worktree,
+ * bounded by the Pane's creation time and, when archived, its update time.
+ * If lifetimes overlap on one path, the newest matching Pane wins.
+ */
+export interface UsageByPane extends UsagePaneCostSlice {
+  paneId: string;
+  paneName: string;
+  worktreePath: string;
+  repoId: number | null;
+  archived: boolean;
+  createdAtMs: number;
+}
+
+export interface UsageByPaneReport {
+  panes: UsageByPane[];
+  unattributed: UsagePaneCostSlice;
+}
+
 /**
  * Usage attributed to the directory the agent ran in.
  *
@@ -140,6 +166,7 @@ export interface UsageReport {
   byModel: UsageByModel[];
   /** Busiest working directories in the range, largest first. */
   byProject: UsageByProject[];
+  byPane: UsageByPaneReport;
   /** Provider-reported quota state; empty when nobody reported any. */
   rateLimits: UsageRateLimitSample[];
   index: UsageIndexStatus;
