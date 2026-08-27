@@ -8,7 +8,9 @@ const path = require('path');
 const rootDir = path.resolve(__dirname, '..');
 const npmCli = path.join(rootDir, 'packages', 'runpane', 'dist', 'cli.js');
 const pythonSource = path.join(rootDir, 'packages', 'runpane-py', 'src');
+const contractPath = path.join(rootDir, 'contracts', 'runpane', 'contract.json');
 const contractFixturePath = path.join(rootDir, 'scripts', 'fixtures', 'runpane-contract.json');
+const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
 const contractFixture = JSON.parse(fs.readFileSync(contractFixturePath, 'utf8'));
 const parserSamples = contractFixture.parserSamples;
 
@@ -123,6 +125,36 @@ function runPythonSnippet(source, input) {
 
 function assertIncludes(text, expected) {
   assert.ok(text.includes(expected), `Expected output to include: ${expected}`);
+}
+
+function matchesJsonSchema(value, schema) {
+  if (schema.oneOf) {
+    return schema.oneOf.filter((candidate) => matchesJsonSchema(value, candidate)).length === 1;
+  }
+  if (Object.prototype.hasOwnProperty.call(schema, 'const') && value !== schema.const) {
+    return false;
+  }
+  if (schema.type === 'string') {
+    return Object.prototype.toString.call(value) === '[object String]' && (!schema.minLength || value.length >= schema.minLength);
+  }
+  if (schema.type === 'number') {
+    return Object.prototype.toString.call(value) === '[object Number]' && Number.isFinite(value);
+  }
+  if (schema.type === 'object') {
+    if (Object.prototype.toString.call(value) !== '[object Object]') return false;
+    const properties = schema.properties ?? {};
+    const required = schema.required ?? [];
+    if (required.some((key) => !Object.prototype.hasOwnProperty.call(value, key))) return false;
+    if (schema.additionalProperties === false && Object.keys(value).some((key) => !Object.prototype.hasOwnProperty.call(properties, key))) return false;
+    return Object.entries(properties).every(([key, propertySchema]) => (
+      !Object.prototype.hasOwnProperty.call(value, key) || matchesJsonSchema(value[key], propertySchema)
+    ));
+  }
+  return true;
+}
+
+function assertMatchesJsonSchema(value, schema, label) {
+  assert.ok(matchesJsonSchema(value, schema), `${label} does not match its JSON schema: ${JSON.stringify(value)}`);
 }
 
 function compareParserParity() {
@@ -1290,14 +1322,32 @@ async function checkPanesCostParity() {
     },
     totals,
   };
+  const incompleteModel = { ...model, estimatedCostUsd: 0, costIncomplete: true };
+  const incompletePayload = {
+    ...payload,
+    panes: payload.panes.map((pane) => ({
+      ...pane,
+      estimatedCostUsd: 0,
+      costIncomplete: true,
+      byModel: [incompleteModel],
+    })),
+    unattributed: {
+      ...payload.unattributed,
+      estimatedCostUsd: 0,
+      costIncomplete: true,
+      byModel: [incompleteModel],
+    },
+    totals: { ...totals, estimatedCostUsd: 0, costIncomplete: true },
+  };
   const originalInvokeDaemon = daemonClient.invokeDaemon;
   const originalConsoleLog = console.log;
   const calls = [];
   const jsonOutputs = [];
   const textOutput = [];
+  const incompleteTextOutput = [];
   daemonClient.invokeDaemon = async (channel, args) => {
     calls.push({ channel, request: args[0] });
-    return payload;
+    return calls.length === 5 ? incompletePayload : payload;
   };
   try {
     for (const args of [
@@ -1309,6 +1359,8 @@ async function checkPanesCostParity() {
       await runPanesCost(parseRunpaneArgs(args));
     }
     console.log = line => textOutput.push(String(line));
+    await runPanesCost(parseRunpaneArgs(['panes', 'cost']));
+    console.log = line => incompleteTextOutput.push(String(line));
     await runPanesCost(parseRunpaneArgs(['panes', 'cost']));
   } finally {
     daemonClient.invokeDaemon = originalInvokeDaemon;
@@ -1323,10 +1375,11 @@ import runpane.local_control as local_control
 from runpane.cli import parse_args
 
 payload = json.loads(${JSON.stringify(JSON.stringify(payload))})
+incomplete_payload = json.loads(${JSON.stringify(JSON.stringify(incompletePayload))})
 calls = []
 def fake_invoke(channel, args, **kwargs):
     calls.append({"channel": channel, "request": args[0]})
-    return payload
+    return incomplete_payload if len(calls) == 5 else payload
 
 local_control.invoke_daemon = fake_invoke
 json_outputs = []
@@ -1343,25 +1396,35 @@ for args in [
 stdout = io.StringIO()
 with contextlib.redirect_stdout(stdout):
     local_control.run_panes_cost(parse_args(["panes", "cost"]))
-print(json.dumps({"calls": calls, "jsonOutputs": json_outputs, "textOutput": stdout.getvalue().splitlines()}))
+incomplete_stdout = io.StringIO()
+with contextlib.redirect_stdout(incomplete_stdout):
+    local_control.run_panes_cost(parse_args(["panes", "cost"]))
+print(json.dumps({"calls": calls, "jsonOutputs": json_outputs, "textOutput": stdout.getvalue().splitlines(), "incompleteTextOutput": incomplete_stdout.getvalue().splitlines()}))
 `));
 
-  assert.strictEqual(calls.length, 4);
+  assert.strictEqual(calls.length, 5);
   assert.ok(calls.every(call => call.channel === 'runpane:panes:cost'));
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(calls.slice(0, 3))), [
+  const nodeCalls = JSON.parse(JSON.stringify(calls));
+  assert.deepStrictEqual(nodeCalls.slice(0, 3), [
     { channel: 'runpane:panes:cost', request: {} },
     { channel: 'runpane:panes:cost', request: { paneId: 'p1' } },
     { channel: 'runpane:panes:cost', request: { repo: 'active' } },
   ]);
-  assert.deepStrictEqual(python.calls.slice(0, 3), [
-    { channel: 'runpane:panes:cost', request: { repo: null, paneId: null } },
-    { channel: 'runpane:panes:cost', request: { repo: null, paneId: 'p1' } },
-    { channel: 'runpane:panes:cost', request: { repo: 'active', paneId: null } },
-  ]);
+  assert.deepStrictEqual(python.calls, nodeCalls);
+  const paneCostRequestSchema = contract.jsonSchemas.paneCostRequest;
+  for (const [index, call] of [...nodeCalls, ...python.calls].entries()) {
+    assertMatchesJsonSchema(call.request, paneCostRequestSchema, `panes cost request ${index + 1}`);
+  }
+  assertMatchesJsonSchema({ repo: { active: true } }, paneCostRequestSchema, 'object repo selector');
+  assert.strictEqual(matchesJsonSchema({ repo: 1 }, paneCostRequestSchema), false);
   assert.deepStrictEqual(python.jsonOutputs, jsonOutputs);
   assert.ok(textOutput.some(line => line.includes('p1\tPane one')));
   assert.ok(textOutput.some(line => line.includes('  claude-sonnet-5')));
   assert.deepStrictEqual(python.textOutput, textOutput);
+  assert.ok(incompleteTextOutput.some(line => line.includes('p1\tPane one\tn/a uncached\tn/a total')));
+  assert.ok(incompleteTextOutput.some(line => line.includes('Unattributed\tn/a uncached\tn/a total')));
+  assert.ok(incompleteTextOutput.some(line => line.includes('Total\tn/a\t')));
+  assert.deepStrictEqual(python.incompleteTextOutput, incompleteTextOutput);
 }
 
 async function checkPaneArchiveDryRunParity() {
@@ -1589,6 +1652,7 @@ function checkHelpOutput() {
   for (const output of [nodePanesHelp, pyPanesHelp]) {
     assertIncludes(output, 'Pane session commands.');
     assertIncludes(output, 'runpane panes list');
+    assertIncludes(output, 'runpane panes cost');
     assertIncludes(output, 'runpane panes create');
     assertIncludes(output, 'runpane panes pin');
     assertIncludes(output, 'runpane panes unpin');

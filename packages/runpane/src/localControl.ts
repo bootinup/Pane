@@ -1912,16 +1912,20 @@ function printPaneListResult(result: PaneListResult): void {
 
 function printPaneCostResult(result: PaneCostResult): void {
   for (const pane of result.panes) {
-    console.log(`${pane.paneId}\t${pane.paneName}\t$${pane.uncachedCostUsd.toFixed(4)} uncached\t$${pane.estimatedCostUsd.toFixed(4)} total\t${Math.round(pane.cacheHitRate * 100)}% hit`);
+    console.log(`${pane.paneId}\t${pane.paneName}\t${formatPaneCost(pane.uncachedCostUsd, pane.costIncomplete)} uncached\t${formatPaneCost(pane.estimatedCostUsd, pane.costIncomplete)} total\t${Math.round(pane.cacheHitRate * 100)}% hit`);
     printPaneCostModels(pane.byModel);
   }
   if (result.unattributed) {
-    console.log(`Unattributed\t$${result.unattributed.uncachedCostUsd.toFixed(4)} uncached\t$${result.unattributed.estimatedCostUsd.toFixed(4)} total\t${Math.round(result.unattributed.cacheHitRate * 100)}% hit`);
+    console.log(`Unattributed\t${formatPaneCost(result.unattributed.uncachedCostUsd, result.unattributed.costIncomplete)} uncached\t${formatPaneCost(result.unattributed.estimatedCostUsd, result.unattributed.costIncomplete)} total\t${Math.round(result.unattributed.cacheHitRate * 100)}% hit`);
     printPaneCostModels(result.unattributed.byModel);
   }
   if (result.totals) {
-    console.log(`Total\t$${result.totals.estimatedCostUsd.toFixed(4)}\t${result.totals.totalTokens} tokens`);
+    console.log(`Total\t${formatPaneCost(result.totals.estimatedCostUsd, result.totals.costIncomplete)}\t${result.totals.totalTokens} tokens`);
   }
+}
+
+function formatPaneCost(costUsd: number, costIncomplete: boolean): string {
+  return costIncomplete ? 'n/a' : `$${costUsd.toFixed(4)}`;
 }
 
 function printPaneCostModels(models: UsageByModelResult[]): void {

@@ -1312,6 +1312,7 @@ export const RUNPANE_CONTRACT = {
         "",
         "Commands:",
         "  runpane panes list [--repo <selector>] [--json]",
+        "  runpane panes cost [--repo <selector>] [--pane <pane-id>] [--json]",
         "  runpane panes create --repo <selector> --name <name> --agent <codex|claude|cursor> [options]",
         "  runpane panes archive --pane <pane-id> [--force] [--source user|agent] [--dry-run] --yes [--json]",
         "  runpane panes pin --pane <pane-id> --yes [--dry-run] [--json]",
@@ -3209,7 +3210,22 @@ export const RUNPANE_CONTRACT = {
               "type": "string"
             },
             {
-              "type": "number"
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "number"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "active": {
+                  "const": true
+                }
+              },
+              "additionalProperties": false
             }
           ]
         },
