@@ -788,7 +788,7 @@ describe('runpane IPC handlers', () => {
       ...session,
       id: 'outside',
       name: 'Outside',
-      archived: true,
+      archived: 1,
       worktree_path: session.worktreePath,
       project_id: session.projectId,
       created_at: '2026-01-01T00:00:00.000Z',
@@ -803,7 +803,7 @@ describe('runpane IPC handlers', () => {
     const result = await createRegistry(services).invoke('runpane:panes:cost', [{ paneId: outside.id }]);
 
     expect(result).toMatchObject({
-      panes: [{ paneId: outside.id, paneName: outside.name, totalTokens: 0, byModel: [] }],
+      panes: [{ paneId: outside.id, paneName: outside.name, archived: true, totalTokens: 0, byModel: [] }],
     });
   });
 
