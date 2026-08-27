@@ -236,7 +236,7 @@ test('opens Usage & Limits from expanded and compact navigation', async ({ page 
   await expect(page.getByText('6.1M', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('gpt-5.6-sol', { exact: true })).toBeVisible();
   await expect(page.getByText('Usage fixture', { exact: true }).last()).toBeVisible();
-  await expect(page.getByText('42%', { exact: true })).toBeVisible();
+  await expect(page.getByText('58% left', { exact: true })).toBeVisible();
 
   // Share and download buttons
   await expect(page.getByRole('button', { name: 'Download usage as image' })).toBeVisible();
