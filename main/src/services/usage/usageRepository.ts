@@ -145,22 +145,35 @@ export class UsageRepository {
     return run();
   }
 
-  /** Keep only the newest sample per limit; older re-scans must not regress it. */
+  /**
+   * Keep only the newest sample per limit; older re-scans must not regress it.
+   * Equal timestamps DO overwrite: a parser-version rescan re-reads the same
+   * newest event, and that is how columns added later (credits, limit_name)
+   * get backfilled on an upgraded installation.
+   */
   recordRateLimits(samples: UsageRateLimitSample[]): void {
     if (samples.length === 0) return;
 
     const upsert = this.db.prepare(`
       INSERT INTO usage_rate_limits (
         provider, limit_id, scope, used_percent, window_minutes,
-        resets_at_ms, plan_type, captured_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        resets_at_ms, plan_type, captured_at_ms,
+        credits_has, credits_balance, credits_unlimited,
+        rate_limit_reached_type, spend_control_reached, limit_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(provider, limit_id, scope) DO UPDATE SET
         used_percent = excluded.used_percent,
         window_minutes = excluded.window_minutes,
         resets_at_ms = excluded.resets_at_ms,
         plan_type = excluded.plan_type,
-        captured_at_ms = excluded.captured_at_ms
-      WHERE excluded.captured_at_ms > usage_rate_limits.captured_at_ms
+        captured_at_ms = excluded.captured_at_ms,
+        credits_has = excluded.credits_has,
+        credits_balance = excluded.credits_balance,
+        credits_unlimited = excluded.credits_unlimited,
+        rate_limit_reached_type = excluded.rate_limit_reached_type,
+        spend_control_reached = excluded.spend_control_reached,
+        limit_name = excluded.limit_name
+      WHERE excluded.captured_at_ms >= usage_rate_limits.captured_at_ms
     `);
 
     this.db.transaction(() => {
@@ -173,7 +186,13 @@ export class UsageRepository {
           sample.windowMinutes,
           sample.resetsAtMs,
           sample.planType,
-          sample.capturedAtMs
+          sample.capturedAtMs,
+          sample.creditsHas === null ? null : sample.creditsHas ? 1 : 0,
+          sample.creditsBalance,
+          sample.creditsUnlimited === null ? null : sample.creditsUnlimited ? 1 : 0,
+          sample.rateLimitReachedType,
+          sample.spendControlReached === null ? null : sample.spendControlReached ? 1 : 0,
+          sample.limitName
         );
       }
     })();
@@ -206,6 +225,12 @@ export class UsageRepository {
       resets_at_ms: number | null;
       plan_type: string | null;
       captured_at_ms: number;
+      credits_has: number | null;
+      credits_balance: string | null;
+      credits_unlimited: number | null;
+      rate_limit_reached_type: string | null;
+      spend_control_reached: number | null;
+      limit_name: string | null;
     }>;
 
     const newestPerWindow = new Map<string, UsageRateLimitSample>();
@@ -228,6 +253,12 @@ export class UsageRepository {
         resetsAtMs: row.resets_at_ms,
         planType: row.plan_type,
         capturedAtMs: row.captured_at_ms,
+        creditsHas: row.credits_has === null ? null : row.credits_has === 1,
+        creditsBalance: row.credits_balance,
+        creditsUnlimited: row.credits_unlimited === null ? null : row.credits_unlimited === 1,
+        rateLimitReachedType: row.rate_limit_reached_type,
+        spendControlReached: row.spend_control_reached === null ? null : row.spend_control_reached === 1,
+        limitName: row.limit_name,
       };
 
       const key = `${sample.provider}:${sample.scope}`;

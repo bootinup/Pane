@@ -18,6 +18,12 @@ function createDb() {
       resets_at_ms INTEGER,
       plan_type TEXT,
       captured_at_ms INTEGER NOT NULL,
+      credits_has INTEGER,
+      credits_balance TEXT,
+      credits_unlimited INTEGER,
+      rate_limit_reached_type TEXT,
+      spend_control_reached INTEGER,
+      limit_name TEXT,
       PRIMARY KEY (provider, limit_id, scope)
     );
     CREATE TABLE IF NOT EXISTS usage_files (
@@ -75,6 +81,33 @@ describe('UsageRepository.getRateLimits', () => {
     const limits = repo.getRateLimits(NOW);
     expect(limits).toHaveLength(1);
     expect(limits[0].usedPercent).toBe(20);
+  });
+
+  /**
+   * Regression (#526 review): a parser-version rescan re-reads the same newest
+   * event with the same capturedAtMs. Equal timestamps must overwrite, or the
+   * columns added in v4 (credits, limit_name) stay null on upgraded installs.
+   */
+  it('backfills new columns when the same capture is re-recorded', () => {
+    seedRateLimit({
+      provider: 'codex', limitId: 'same', scope: 'primary',
+      usedPercent: 20, windowMinutes: 300, resetsAtMs: NOW + HOUR_MS,
+      planType: 'plus', capturedAtMs: NOW - HOUR_MS,
+      creditsHas: null, creditsBalance: null, creditsUnlimited: null,
+      rateLimitReachedType: null, spendControlReached: null, limitName: null,
+    });
+    seedRateLimit({
+      provider: 'codex', limitId: 'same', scope: 'primary',
+      usedPercent: 20, windowMinutes: 300, resetsAtMs: NOW + HOUR_MS,
+      planType: 'plus', capturedAtMs: NOW - HOUR_MS,
+      creditsHas: true, creditsBalance: '12.50', creditsUnlimited: false,
+      rateLimitReachedType: null, spendControlReached: false, limitName: 'codex_plus',
+    });
+
+    const limits = repo.getRateLimits(NOW);
+    expect(limits).toHaveLength(1);
+    expect(limits[0].limitName).toBe('codex_plus');
+    expect(limits[0].creditsBalance).toBe('12.50');
   });
 
   it('drops expired windows', () => {
