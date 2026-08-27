@@ -75,6 +75,33 @@ describe('WorkspaceJournal', () => {
     expect(entries[2]).toMatchObject({ paneName: 'Monitor', settledMs: 20_000, heldInput: 'ship it' });
   });
 
+  it('forgets panel state when a terminal exits', () => {
+    const journal = new WorkspaceJournal();
+    journal.send('session:created', { id: 'pane-1', name: 'Monitor' });
+    journal.send('panel:agentStatus', {
+      panelId: 'panel-1',
+      sessionId: 'pane-1',
+      state: 'working',
+    });
+    journal.send('panel:event', {
+      type: 'terminal:exit',
+      source: { panelId: 'panel-1', sessionId: 'pane-1' },
+      data: { exitCode: 0 },
+    });
+    journal.send('panel:agentStatus', {
+      panelId: 'panel-1',
+      sessionId: 'pane-1',
+      state: 'working',
+    });
+
+    expect(journal.readAfter(0).entries.map(entry => entry.kind)).toEqual([
+      'pane.created',
+      'agent.busy',
+      'panel.exited',
+      'agent.busy',
+    ]);
+  });
+
   it('times out without inventing an entry', async () => {
     vi.useFakeTimers();
     const journal = new WorkspaceJournal();
