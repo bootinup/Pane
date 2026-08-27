@@ -38,8 +38,6 @@ type TerminalUnderTest = {
   outputFlushTimer: ReturnType<typeof setTimeout> | null;
   isVisible: boolean;
   isAlternateScreen: boolean;
-  activityStatus: 'active' | 'idle';
-  idleTimer: ReturnType<typeof setTimeout> | null;
   inSyncBlock: boolean;
   agentType?: 'claude' | 'codex' | 'cursor';
   agentSessionScrapeBuffer: string;
@@ -138,8 +136,6 @@ function createTerminal(overrides: Partial<TerminalUnderTest> = {}): TerminalUnd
     outputFlushTimer: null,
     isVisible: true,
     isAlternateScreen: false,
-    activityStatus: 'idle',
-    idleTimer: null,
     inSyncBlock: false,
     agentSessionScrapeBuffer: '',
     ...overrides,
@@ -439,7 +435,6 @@ describe('TerminalPanelManager hidden output delivery', () => {
       alternateScreenBuffer: 'screen',
       screenEmulator,
       isAlternateScreen: true,
-      activityStatus: 'active',
       currentCommand: 'codex',
       capturedAgentSessionId: 'agent-session-1',
     });
@@ -472,7 +467,7 @@ describe('TerminalPanelManager hidden output delivery', () => {
       alternateScreenBuffer: 'screen',
       screenText: 'agent screen',
       isAlternateScreen: true,
-      activityStatus: 'active',
+      activityStatus: 'idle',
       currentCommand: 'codex',
       isCliPanel: true,
       isCliReady: true,

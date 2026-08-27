@@ -31,7 +31,9 @@ import {
   runPanesPin,
   runPanesRename,
   runReposAdd,
-  runReposList
+  runReposList,
+  runWatch,
+  runWorkspaceState
 } from './localControl';
 import { detectPlatform } from './platform';
 import { resolveRelease } from './releases';
@@ -107,6 +109,14 @@ async function dispatchParsedCommand(parsed: ParsedArgs, telemetryContext: Wrapp
 
   if (parsed.command === 'panes list') {
     return runPanesList(parsed);
+  }
+
+  if (parsed.command === 'workspace state') {
+    return runWorkspaceState(parsed);
+  }
+
+  if (parsed.command === 'watch') {
+    return runWatch(parsed);
   }
 
   if (parsed.command === 'panes create') {

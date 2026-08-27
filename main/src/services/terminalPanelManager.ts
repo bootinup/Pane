@@ -30,7 +30,6 @@ const OUTPUT_BATCH_INTERVAL_HIDDEN = 250; // ms — background / hidden cadence 
 const OUTPUT_BATCH_SIZE = 131072; // 128KB — timer-based flush preferred; size trigger is safety net
 const OUTPUT_BATCH_SIZE_HIDDEN = 80_000; // 80KB — cap hidden flush size to avoid foreground backpressure churn
 const MAX_CONCURRENT_SPAWNS = 3;
-const IDLE_THRESHOLD_MS = 30_000; // 30s — mark panel idle after no PTY output
 const AGENT_STATUS_POLL_MS = 500; // cadence for re-deriving blocked/working/done from the live screen
 const MAX_SCROLLBACK_BUFFER_SIZE = 500_000; // 500KB of normal shell history
 const MAX_ALTERNATE_SCREEN_BUFFER_SIZE = 100_000; // 100KB of recent TUI redraw state
@@ -212,8 +211,6 @@ interface TerminalProcess {
   isVisible: boolean;
   // Alternate screen buffer tracking — universal TUI detection signal
   isAlternateScreen: boolean;
-  activityStatus: 'active' | 'idle';
-  idleTimer: ReturnType<typeof setTimeout> | null;
   /** CLI agent driving this panel, when any — selects the status-detection manifest. */
   agentType?: CliAgentType;
   // DEC Mode 2026 synchronized-output block tracking — persists across chunks
@@ -1066,8 +1063,6 @@ export class TerminalPanelManager {
       outputFlushTimer: null,
       isVisible: true,
       isAlternateScreen: false,
-      activityStatus: 'idle',
-      idleTimer: null,
       inSyncBlock: false,
       filterInAltScreen: false,
       agentType: this.resolveTerminalAgentType(terminalCustomState(panel.state)),
@@ -1208,18 +1203,6 @@ export class TerminalPanelManager {
       terminal.lastOutputAt = outputAt;
       terminal.outputGeneration += 1;
 
-      // Activity status transition: mark active on first byte after idle
-      if (terminal.activityStatus !== 'active') {
-        terminal.activityStatus = 'active';
-        this.emitActivityStatus(terminal);
-      }
-      if (terminal.idleTimer) clearTimeout(terminal.idleTimer);
-      terminal.idleTimer = setTimeout(() => {
-        terminal.activityStatus = 'idle';
-        terminal.idleTimer = null;
-        this.emitActivityStatus(terminal);
-      }, IDLE_THRESHOLD_MS);
-
       // Feed PTY activity to the agent-status monitor (the "working" authority).
       this.agentStatusMonitor.noteActivity(terminal.panelId, outputAt.getTime());
 
@@ -1309,16 +1292,6 @@ export class TerminalPanelManager {
     
     // Handle terminal exit
     terminal.pty.onExit((exitCode: { exitCode: number; signal?: number }) => {
-      // Clear idle timer and mark as idle on exit
-      if (terminal.idleTimer) {
-        clearTimeout(terminal.idleTimer);
-        terminal.idleTimer = null;
-      }
-      if (terminal.activityStatus !== 'idle') {
-        terminal.activityStatus = 'idle';
-        this.emitActivityStatus(terminal);
-      }
-
       // A finished agent is "done": settle its status to idle and stop tracking.
       if (this.agentStatusMonitor.isTracked(terminal.panelId)) {
         this.emitAgentStatus(terminal, 'idle', 'exit');
@@ -1654,7 +1627,7 @@ export class TerminalPanelManager {
       alternateScreenBuffer: terminal.alternateScreenBuffer,
       screenText: terminal.screenEmulator?.getScreenText(),
       isAlternateScreen: terminal.screenEmulator?.isAlternateScreen ?? terminal.isAlternateScreen,
-      activityStatus: terminal.activityStatus,
+      activityStatus: this.deriveActivityStatus(panelId),
       lastActivityTime: terminal.lastActivity.toISOString(),
       currentCommand: terminal.currentCommand,
       isCliPanel: customState.isCliPanel,
@@ -1685,11 +1658,20 @@ export class TerminalPanelManager {
     await panelManager.updatePanel(panelId, { state });
   }
   
+  private deriveActivityStatus(panelId: string): 'active' | 'idle' {
+    const state = this.agentStatusMonitor.getState(panelId);
+    return state === 'working' || state === 'blocked' ? 'active' : 'idle';
+  }
+
+  getAgentStatus(panelId: string): AgentState | undefined {
+    return this.agentStatusMonitor.getState(panelId);
+  }
+
   private emitActivityStatus(terminal: TerminalProcess): void {
     this.sendRendererEvent('panel:activityStatus', {
       panelId: terminal.panelId,
       sessionId: terminal.sessionId,
-      status: terminal.activityStatus,
+      status: this.deriveActivityStatus(terminal.panelId),
       lastActivityAt: terminal.lastActivity.toISOString()
     });
   }
@@ -1721,6 +1703,7 @@ export class TerminalPanelManager {
       reason,
     };
     this.sendRendererEvent('panel:agentStatus', payload);
+    this.emitActivityStatus(terminal);
   }
 
   private ensureAgentStatusPoll(): void {
@@ -1783,10 +1766,6 @@ export class TerminalPanelManager {
       terminal.outputFlushTimer = null;
     }
     disposeFlowControlRecord(terminal.flowControl);
-    if (terminal.idleTimer) {
-      clearTimeout(terminal.idleTimer);
-      terminal.idleTimer = null;
-    }
     this.flushOutputBuffer(terminal);
     terminal.screenEmulator?.dispose();
 
@@ -1922,10 +1901,6 @@ export class TerminalPanelManager {
         terminal.outputFlushTimer = null;
       }
       disposeFlowControlRecord(terminal.flowControl);
-      if (terminal.idleTimer) {
-        clearTimeout(terminal.idleTimer);
-        terminal.idleTimer = null;
-      }
       terminal.screenEmulator?.dispose();
       this.terminals.delete(panelId);
       this.visibleViewersByPanel.delete(panelId);
@@ -2032,10 +2007,6 @@ export class TerminalPanelManager {
           terminal.outputFlushTimer = null;
         }
         disposeFlowControlRecord(terminal.flowControl);
-        if (terminal.idleTimer) {
-          clearTimeout(terminal.idleTimer);
-          terminal.idleTimer = null;
-        }
         this.flushOutputBuffer(terminal);
         terminal.screenEmulator?.dispose();
 

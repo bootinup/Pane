@@ -2,8 +2,78 @@ import type { ProjectEnvironment, ToolPanelType } from './panels';
 import type { RunpaneAgent } from './generatedRunpaneContract';
 import type { RemoteDaemonExecutableHealth } from './remoteDaemon';
 import type { TerminalGraphicsProtocol } from '../constants/terminalGraphics';
+import type { AgentState } from './agentStatus';
 
 export type RunpaneAgentId = RunpaneAgent;
+
+export type RunpaneWorkspaceEntryKind =
+  | 'agent.ready'
+  | 'agent.busy'
+  | 'agent.blocked'
+  | 'agent.unknown'
+  | 'pane.created'
+  | 'pane.gone'
+  | 'panel.exited';
+
+export interface RunpaneWorkspaceEntry {
+  gen: number;
+  at: string;
+  kind: RunpaneWorkspaceEntryKind;
+  paneId: string;
+  paneName: string;
+  repoId?: number;
+  repoName?: string;
+  worktreePath?: string;
+  panelId?: string;
+  agentType?: string;
+  from?: AgentState;
+  to?: AgentState;
+  source: 'agent' | 'exit' | 'session';
+  reason?: string | null;
+  settledMs?: number;
+  heldInput?: string;
+  exitCode?: number;
+  baseline?: true;
+  changedWhileAway?: boolean;
+}
+
+export interface RunpaneWorkspaceWaitRequest {
+  since?: number;
+  as?: string;
+  from?: 'now' | 'earliest';
+  timeoutMs?: number;
+  limit?: number;
+  kinds?: RunpaneWorkspaceEntryKind[];
+  paneIds?: string[];
+  repo?: RunpaneRepoSelector;
+  nameContains?: string;
+  ackNow?: boolean;
+  includeHeldInput?: boolean;
+}
+
+export type RunpaneWorkspaceResetReason =
+  | 'first-use'
+  | 'epoch-changed'
+  | 'cursor-truncated'
+  | 'unknown-consumer';
+
+export interface RunpaneWorkspaceWaitResult {
+  ok: true;
+  epoch: string;
+  generation: number;
+  entries: RunpaneWorkspaceEntry[];
+  timedOut: boolean;
+  dropped?: number;
+  reset?: { reason: RunpaneWorkspaceResetReason };
+  nextCommand: string;
+}
+
+export interface RunpaneWorkspaceStateResult {
+  ok: true;
+  epoch: string;
+  generation: number;
+  entries: RunpaneWorkspaceEntry[];
+}
 
 export type RunpaneRepoSelector =
   | string
@@ -133,6 +203,7 @@ export type RunpanePanelBlockerKind =
 export interface RunpanePanelStateSummary {
   initialized: boolean;
   isAlternateScreen?: boolean;
+  /** @deprecated Derived from the authoritative agent status for wire compatibility. */
   activityStatus?: RunpanePanelActivityStatus;
   isCliReady?: boolean;
   isCliPanel?: boolean;
@@ -210,6 +281,7 @@ export type RunpanePaneCreateResultItem =
 
 export interface RunpanePaneCreateResult {
   ok: boolean;
+  generation?: number;
   repo: RunpaneRepoSummary;
   items: RunpanePaneCreateResultItem[];
 }
@@ -248,6 +320,7 @@ export interface RunpanePanePinRequest {
 
 export interface RunpanePanePinResult {
   ok: true;
+  generation?: number;
   paneId: string;
   pinned: boolean;
   dryRun?: true;
@@ -262,6 +335,7 @@ export interface RunpanePaneRenameRequest {
 
 export interface RunpanePaneRenameResult {
   ok: true;
+  generation?: number;
   dryRun?: true;
   pane: RunpanePaneSummary;
 }
@@ -305,6 +379,7 @@ export interface RunpanePaneArchiveBlockReason {
 
 export interface RunpanePaneArchiveBlockedResult {
   ok: false;
+  generation?: number;
   paneId: string;
   blocked: RunpanePaneArchiveBlockReason;
   nextCommand: string;
@@ -312,6 +387,7 @@ export interface RunpanePaneArchiveBlockedResult {
 
 export interface RunpanePaneArchiveSuccessResult {
   ok: boolean;
+  generation?: number;
   paneId: string;
   archived: true;
   forced: boolean;
@@ -375,6 +451,7 @@ export interface RunpanePanelCreateRequest {
 
 export interface RunpanePanelCreateResult {
   ok: boolean;
+  generation?: number;
   paneId: string;
   panelId: string;
   title: string;
@@ -441,6 +518,7 @@ export interface RunpanePanelInputRequest {
 
 export interface RunpanePanelInputResult {
   ok: true;
+  generation?: number;
   panelId: string;
   paneId?: string;
   inputBytes: number;
@@ -457,6 +535,7 @@ export type RunpanePanelVerification = 'observed' | 'unverifiable';
 
 export interface RunpanePanelSubmitResult {
   ok: boolean;
+  generation?: number;
   panelId: string;
   paneId?: string;
   inputBytes: number;
@@ -478,6 +557,7 @@ export interface RunpanePanelSubmitComposerRequest {
 
 export interface RunpanePanelSubmitComposerResult {
   ok: boolean;
+  generation?: number;
   panelId: string;
   paneId?: string;
   inputBytes: number;

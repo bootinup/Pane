@@ -55,6 +55,15 @@ export interface ParsedArgs {
   noPinned?: boolean;
   composerStrategy?: string;
   force?: boolean;
+  watchAs?: string;
+  watchSince?: number;
+  watchFrom?: 'now' | 'earliest';
+  watchKinds?: string[];
+  watchPaneIds?: string[];
+  nameContains?: string;
+  follow?: boolean;
+  ackNow?: boolean;
+  includeHeldInput?: boolean;
   remoteSetupArgs: string[];
 }
 
@@ -70,7 +79,7 @@ const targetSchema = boundary.enumeration(...RUNPANE_CONTRACT.enums.installTarge
 const formatSchema = boundary.enumeration(...RUNPANE_CONTRACT.enums.artifactFormats);
 const channelSchema = boundary.enumeration(...RUNPANE_CONTRACT.enums.channels);
 const agentSchema = boundary.enumeration(...RUNPANE_CONTRACT.enums.agents);
-const COMMAND_GROUP_HELP_TOPICS = new Set(['panes', 'panels']);
+const COMMAND_GROUP_HELP_TOPICS = new Set(['panes', 'panels', 'workspace']);
 
 const REMOTE_VALUE_FLAGS = new Set<string>(RUNPANE_CONTRACT.flags.remoteValue.map((flag) => flag.name));
 const REMOTE_BOOLEAN_FLAGS = new Set<string>(RUNPANE_CONTRACT.flags.remoteBoolean.map((flag) => flag.name));
@@ -282,6 +291,18 @@ function parseLocalBooleanFlag(flag: string, parsed: ParsedArgs): void {
     parsed.force = true;
     return;
   }
+  if (flag === '--follow') {
+    parsed.follow = true;
+    return;
+  }
+  if (flag === '--ack-now') {
+    parsed.ackNow = true;
+    return;
+  }
+  if (flag === '--include-held-input') {
+    parsed.includeHeldInput = true;
+    return;
+  }
 
   throw new Error(`Unknown option for ${parsed.command}: ${flag}`);
 }
@@ -296,7 +317,11 @@ function parseLocalValueFlag(flag: string, value: string, parsed: ParsedArgs): v
     return;
   }
   if (flag === '--pane') {
-    parsed.paneId = value;
+    if (parsed.command === 'watch') {
+      (parsed.watchPaneIds ??= []).push(value);
+    } else {
+      parsed.paneId = value;
+    }
     return;
   }
   if (flag === '--panel') {
@@ -356,8 +381,8 @@ function parseLocalValueFlag(flag: string, value: string, parsed: ParsedArgs): v
   }
   if (flag === '--timeout-ms') {
     const timeoutMs = Number(value);
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-      throw new Error('--timeout-ms must be a positive number.');
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0 || (timeoutMs === 0 && parsed.command !== 'watch')) {
+      throw new Error('--timeout-ms must be a positive number (watch also accepts 0).');
     }
     parsed.timeoutMs = timeoutMs;
     return;
@@ -419,6 +444,29 @@ function parseLocalValueFlag(flag: string, value: string, parsed: ParsedArgs): v
     parsed.composerStrategy = value;
     return;
   }
+  if (flag === '--as') {
+    parsed.watchAs = value;
+    return;
+  }
+  if (flag === '--since') {
+    const since = Number(value);
+    if (!Number.isInteger(since) || since < 0) throw new Error('--since must be a non-negative integer.');
+    parsed.watchSince = since;
+    return;
+  }
+  if (flag === '--from') {
+    if (value !== 'now' && value !== 'earliest') throw new Error('--from must be now or earliest.');
+    parsed.watchFrom = value;
+    return;
+  }
+  if (flag === '--kinds') {
+    parsed.watchKinds = value.split(',').map(kind => kind.trim()).filter(Boolean);
+    return;
+  }
+  if (flag === '--name-contains') {
+    parsed.nameContains = value;
+    return;
+  }
 
   throw new Error(`Unknown option for ${parsed.command}: ${flag}`);
 }
@@ -442,6 +490,8 @@ function isRunpaneLocalCommand(command: RunpaneCommand): boolean {
     || command === 'panels submit'
     || command === 'panels submit-composer'
     || command === 'panels wait'
+    || command === 'workspace state'
+    || command === 'watch'
     || command === 'agents doctor';
 }
 

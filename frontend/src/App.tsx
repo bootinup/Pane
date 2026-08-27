@@ -169,15 +169,6 @@ function App() {
   useEffect(() => {
     const unsubscribe = window.electronAPI?.events?.onPanelActivityStatus?.((data) => {
       usePanelStore.getState().setActivityStatus(data.panelId, data.status, data.lastActivityAt);
-
-      if (data.status === 'idle') {
-        const nextPanelStore = usePanelStore.getState();
-        const activeSessionId = useSessionStore.getState().activeSessionId;
-        const sessionIsNowIdle = nextPanelStore.getSessionActivityStatus(data.sessionId) === 'idle';
-        if (sessionIsNowIdle && activeSessionId !== data.sessionId) {
-          nextPanelStore.markUnviewedCompletedActivity(data.sessionId, data.lastActivityAt);
-        }
-      }
     });
     return () => unsubscribe?.();
   }, []);

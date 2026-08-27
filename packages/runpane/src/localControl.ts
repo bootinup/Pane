@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { stdin as input, stdout as output } from 'node:process';
 import { createInterface } from 'node:readline/promises';
 import { boundary, decodeBoundary } from './boundaryDecoder';
-import { invokeDaemon } from './daemonClient';
+import { invokeDaemon, PaneDaemonClientError } from './daemonClient';
 import { RUNPANE_CONTRACT } from './generated/contract';
 import type { ParsedArgs, RunpaneAgent } from './commands';
 import type { BoundarySchema, JsonValue } from './boundaryDecoder';
@@ -94,6 +94,7 @@ interface PaneCreateFailureItem {
 
 interface PaneCreateResult {
   ok: boolean;
+  generation?: number;
   repo: RepoSummary;
   items: Array<PaneCreateSuccessItem | PaneCreateFailureItem>;
 }
@@ -151,6 +152,7 @@ interface PanePinRequest {
 
 interface PanePinResult {
   ok: true;
+  generation?: number;
   paneId: string;
   pinned: boolean;
   dryRun?: true;
@@ -165,6 +167,7 @@ interface PaneRenameRequest {
 
 interface PaneRenameResult {
   ok: true;
+  generation?: number;
   dryRun?: true;
   pane: PaneSummary;
 }
@@ -182,6 +185,7 @@ interface PaneArchiveSafetyCheck {
 
 interface PaneArchiveBlockedResult {
   ok: false;
+  generation?: number;
   paneId: string;
   blocked: {
     code: 'uncommitted-changes' | 'unpushed-commits' | 'uncommitted-and-unpushed' | 'status-unknown';
@@ -193,6 +197,7 @@ interface PaneArchiveBlockedResult {
 
 interface PaneArchiveSuccessResult {
   ok: boolean;
+  generation?: number;
   paneId: string;
   archived: true;
   forced: boolean;
@@ -247,6 +252,7 @@ interface PanelCreateRequest {
 
 interface PanelCreateResult {
   ok: boolean;
+  generation?: number;
   paneId: string;
   panelId: string;
   title: string;
@@ -286,6 +292,7 @@ interface PanelInputRequest {
 
 interface PanelInputResult {
   ok: true;
+  generation?: number;
   panelId: string;
   paneId?: string;
   inputBytes: number;
@@ -339,6 +346,7 @@ interface PanelScreenResult {
 
 interface PanelSubmitResult {
   ok: boolean;
+  generation?: number;
   panelId: string;
   paneId?: string;
   inputBytes: number;
@@ -353,6 +361,7 @@ interface PanelSubmitResult {
 
 interface PanelSubmitComposerResult {
   ok: boolean;
+  generation?: number;
   panelId: string;
   paneId?: string;
   inputBytes: number;
@@ -390,6 +399,51 @@ interface AgentDoctorResult {
     message: string;
   }>;
   warnings?: string[];
+}
+
+type WorkspaceEntryKind =
+  | 'agent.ready'
+  | 'agent.busy'
+  | 'agent.blocked'
+  | 'agent.unknown'
+  | 'pane.created'
+  | 'pane.gone'
+  | 'panel.exited';
+
+interface WorkspaceEntry {
+  gen: number;
+  at: string;
+  kind: WorkspaceEntryKind;
+  paneId: string;
+  paneName: string;
+  repoId?: number;
+  repoName?: string;
+  worktreePath?: string;
+  panelId?: string;
+  agentType?: string;
+  from?: 'blocked' | 'working' | 'idle' | 'unknown';
+  to?: 'blocked' | 'working' | 'idle' | 'unknown';
+  source: 'agent' | 'exit' | 'session';
+  reason?: string | null;
+  settledMs?: number;
+  heldInput?: string;
+  exitCode?: number;
+  baseline?: true;
+  changedWhileAway?: boolean;
+}
+
+interface WorkspaceStateResult {
+  ok: true;
+  epoch: string;
+  generation: number;
+  entries: WorkspaceEntry[];
+}
+
+interface WorkspaceWaitResult extends WorkspaceStateResult {
+  timedOut: boolean;
+  dropped?: number;
+  reset?: { reason: 'first-use' | 'epoch-changed' | 'cursor-truncated' | 'unknown-consumer' };
+  nextCommand: string;
 }
 
 interface PaneToolInput {
@@ -541,6 +595,7 @@ const paneListResultSchema: BoundarySchema<PaneListResult> = boundary.object({
 });
 const paneCreateResultSchema: BoundarySchema<PaneCreateResult> = boundary.object({
   ok: boundary.boolean,
+  generation: boundary.optional(boundary.number),
   repo: repoSummarySchema,
   items: boundary.array(boundary.union(
     boundary.object({
@@ -572,6 +627,7 @@ const paneCreateResultSchema: BoundarySchema<PaneCreateResult> = boundary.object
 const paneArchiveResultSchema: BoundarySchema<PaneArchiveResult> = boundary.union(
   boundary.object({
     ok: boundary.literal(false),
+    generation: boundary.optional(boundary.number),
     paneId: boundary.string,
     blocked: boundary.object({
       code: boundary.enumeration('uncommitted-changes', 'unpushed-commits', 'uncommitted-and-unpushed', 'status-unknown'),
@@ -595,6 +651,7 @@ const paneArchiveResultSchema: BoundarySchema<PaneArchiveResult> = boundary.unio
   }),
   boundary.object({
     ok: boundary.boolean,
+    generation: boundary.optional(boundary.number),
     paneId: boundary.string,
     archived: boundary.literal(true),
     forced: boundary.boolean,
@@ -605,6 +662,7 @@ const paneArchiveResultSchema: BoundarySchema<PaneArchiveResult> = boundary.unio
 );
 const panePinResultSchema: BoundarySchema<PanePinResult> = boundary.object({
   ok: boundary.literal(true),
+  generation: boundary.optional(boundary.number),
   paneId: boundary.string,
   pinned: boundary.boolean,
   dryRun: boundary.optional(boundary.literal(true)),
@@ -612,6 +670,7 @@ const panePinResultSchema: BoundarySchema<PanePinResult> = boundary.object({
 });
 const paneRenameResultSchema: BoundarySchema<PaneRenameResult> = boundary.object({
   ok: boundary.literal(true),
+  generation: boundary.optional(boundary.number),
   dryRun: boundary.optional(boundary.literal(true)),
   pane: paneSummarySchema,
 });
@@ -622,6 +681,7 @@ const panelListResultSchema: BoundarySchema<PanelListResult> = boundary.object({
 });
 const panelCreateResultSchema: BoundarySchema<PanelCreateResult> = boundary.object({
   ok: boundary.boolean,
+  generation: boundary.optional(boundary.number),
   paneId: boundary.string,
   panelId: boundary.string,
   title: boundary.string,
@@ -652,6 +712,7 @@ const panelOutputResultSchema: BoundarySchema<PanelOutputResult> = boundary.obje
 });
 const panelInputResultSchema: BoundarySchema<PanelInputResult> = boundary.object({
   ok: boundary.literal(true),
+  generation: boundary.optional(boundary.number),
   panelId: boundary.string,
   paneId: boundary.optional(boundary.string),
   inputBytes: boundary.number,
@@ -676,6 +737,7 @@ const panelScreenResultSchema: BoundarySchema<PanelScreenResult> = boundary.obje
 });
 const panelSubmitResultSchema: BoundarySchema<PanelSubmitResult> = boundary.object({
   ok: boundary.boolean,
+  generation: boundary.optional(boundary.number),
   panelId: boundary.string,
   paneId: boundary.optional(boundary.string),
   inputBytes: boundary.number,
@@ -689,6 +751,7 @@ const panelSubmitResultSchema: BoundarySchema<PanelSubmitResult> = boundary.obje
 });
 const panelSubmitComposerResultSchema: BoundarySchema<PanelSubmitComposerResult> = boundary.object({
   ok: boundary.boolean,
+  generation: boundary.optional(boundary.number),
   panelId: boundary.string,
   paneId: boundary.optional(boundary.string),
   inputBytes: boundary.number,
@@ -732,6 +795,55 @@ const agentDoctorResultSchema: BoundarySchema<AgentDoctorResult> = boundary.obje
     message: boundary.string,
   })),
   warnings: boundary.optional(boundary.array(boundary.string)),
+});
+const workspaceEntryKindSchema = boundary.enumeration(
+  'agent.ready',
+  'agent.busy',
+  'agent.blocked',
+  'agent.unknown',
+  'pane.created',
+  'pane.gone',
+  'panel.exited',
+);
+const agentStateSchema = boundary.enumeration('blocked', 'working', 'idle', 'unknown');
+const workspaceEntrySchema: BoundarySchema<WorkspaceEntry> = boundary.object({
+  gen: boundary.number,
+  at: boundary.string,
+  kind: workspaceEntryKindSchema,
+  paneId: boundary.string,
+  paneName: boundary.string,
+  repoId: boundary.optional(boundary.number),
+  repoName: boundary.optional(boundary.string),
+  worktreePath: boundary.optional(boundary.string),
+  panelId: boundary.optional(boundary.string),
+  agentType: boundary.optional(boundary.string),
+  from: boundary.optional(agentStateSchema),
+  to: boundary.optional(agentStateSchema),
+  source: boundary.enumeration('agent', 'exit', 'session'),
+  reason: boundary.optional(boundary.nullable(boundary.string)),
+  settledMs: boundary.optional(boundary.number),
+  heldInput: boundary.optional(boundary.string),
+  exitCode: boundary.optional(boundary.number),
+  baseline: boundary.optional(boundary.literal(true)),
+  changedWhileAway: boundary.optional(boundary.boolean),
+});
+const workspaceStateResultSchema: BoundarySchema<WorkspaceStateResult> = boundary.object({
+  ok: boundary.literal(true),
+  epoch: boundary.string,
+  generation: boundary.number,
+  entries: boundary.array(workspaceEntrySchema),
+});
+const workspaceWaitResultSchema: BoundarySchema<WorkspaceWaitResult> = boundary.object({
+  ok: boundary.literal(true),
+  epoch: boundary.string,
+  generation: boundary.number,
+  entries: boundary.array(workspaceEntrySchema),
+  timedOut: boundary.boolean,
+  dropped: boundary.optional(boundary.number),
+  reset: boundary.optional(boundary.object({
+    reason: boundary.enumeration('first-use', 'epoch-changed', 'cursor-truncated', 'unknown-consumer'),
+  })),
+  nextCommand: boundary.string,
 });
 const repoSelectorSchema: BoundarySchema<PaneCreateRequest['repo']> = boundary.union(
   boundary.nonEmptyString,
@@ -821,6 +933,67 @@ export async function runPanesList(parsed: ParsedArgs): Promise<number> {
 
   printPaneListResult(result);
   return 0;
+}
+
+export async function runWorkspaceState(parsed: ParsedArgs): Promise<number> {
+  const result = await invokeDaemon('runpane:workspace:state', [{ repo: parsed.repo }], workspaceStateResultSchema, {
+    paneDir: parsed.paneDir,
+  });
+  if (parsed.json) {
+    printJson(result);
+  } else {
+    for (const entry of result.entries) {
+      const panel = entry.panelId ? `\t${entry.panelId}` : '';
+      console.log(`${workspaceLabel(entry.kind)}\t${entry.paneName}${panel}`);
+    }
+  }
+  return 0;
+}
+
+export async function runWatch(parsed: ParsedArgs): Promise<number> {
+  if (parsed.watchAs && parsed.watchSince !== undefined) {
+    throw new Error('runpane watch accepts either --as or --since, not both.');
+  }
+  const request = {
+    as: parsed.watchAs,
+    since: parsed.watchSince,
+    from: parsed.watchFrom,
+    timeoutMs: parsed.timeoutMs,
+    limit: parsed.limit,
+    kinds: parsed.watchKinds,
+    paneIds: parsed.watchPaneIds,
+    repo: parsed.repo,
+    nameContains: parsed.nameContains,
+    ackNow: parsed.ackNow || undefined,
+    includeHeldInput: parsed.includeHeldInput || undefined,
+  };
+
+  do {
+    const timeoutMs = parsed.timeoutMs ?? 60_000;
+    try {
+      const result = await invokeDaemon('runpane:workspace:wait', [request], workspaceWaitResultSchema, {
+        paneDir: parsed.paneDir,
+        timeoutMs: timeoutMs + 5_000,
+        eventInclude: [],
+      });
+      printWorkspaceWaitResult(result, parsed.json);
+      if (!parsed.watchAs) request.since = result.generation;
+    } catch (error) {
+      if (!(error instanceof Error) || !parsed.follow || !isRetryableWatchError(error)) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1_000));
+    }
+  } while (parsed.follow);
+
+  return 0;
+}
+
+function isRetryableWatchError(error: Error): boolean {
+  if (!(error instanceof PaneDaemonClientError)) return false;
+  return error.code === 'ERR_RUNPANE_DAEMON_CLOSED'
+    || error.code === 'ERR_RUNPANE_DAEMON_CONNECT_FAILED'
+    || error.code === 'ERR_RUNPANE_DAEMON_TIMEOUT'
+    || error.code === 'ECONNREFUSED'
+    || error.code === 'ENOENT';
 }
 
 export async function runPanesCreate(parsed: ParsedArgs): Promise<number> {
@@ -1525,6 +1698,35 @@ function stripUtf8Bom(value: string): string {
 
 function printJson<Value>(value: Value): void {
   console.log(JSON.stringify(value, null, 2));
+}
+
+function printWorkspaceWaitResult(result: WorkspaceWaitResult, json: boolean): void {
+  if (result.reset) {
+    const reset = { kind: '_reset', reason: result.reset.reason, epoch: result.epoch };
+    if (json) output.write(`${JSON.stringify(reset)}\n`);
+    else console.log(`RESET\t${result.reset.reason}`);
+  }
+  for (const entry of result.entries) {
+    if (json) {
+      output.write(`${JSON.stringify(entry)}\n`);
+      continue;
+    }
+    console.log(`${workspaceLabel(entry.kind)}\t${entry.paneName}`);
+    if (entry.heldInput) console.log(`STUCK\t${entry.paneName} :: ${entry.heldInput.slice(0, 70)}`);
+  }
+}
+
+function workspaceLabel(kind: WorkspaceEntryKind): string {
+  const labels = {
+    'agent.ready': 'READY',
+    'agent.busy': 'BUSY',
+    'agent.blocked': 'BLOCKED',
+    'agent.unknown': 'UNKNOWN',
+    'pane.created': 'NEW',
+    'pane.gone': 'GONE',
+    'panel.exited': 'EXIT',
+  } satisfies Record<WorkspaceEntryKind, string>;
+  return labels[kind];
 }
 
 function printRepoAddResult(result: RepoAddResult): void {

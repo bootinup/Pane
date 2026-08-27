@@ -118,6 +118,22 @@ describe('SkillCacheManager Pane Chat guide', () => {
     expect(runtimeContext).toContain('Do not switch to a different Pane install.');
   });
 
+  it('writes the journal-backed Pane watcher without snapshot reconstruction', async () => {
+    const manager = new SkillCacheManager();
+
+    await manager.ensurePaneChatGuide();
+
+    const watcher = await fs.readFile(manager.paneWatchScriptPath, 'utf8');
+    expect(watcher).toContain('"runpane", "watch", "--as", "watch.py"');
+    expect(watcher).toContain('"--include-held-input"');
+    expect(watcher).toContain('command.append("--follow")');
+    expect(watcher).not.toContain('def resolve_runpane');
+    expect(watcher).not.toContain('class State');
+    expect(watcher).not.toContain('def check_panes');
+    expect(watcher).not.toContain('def check_activity');
+    expect(watcher).not.toContain('def composer_text');
+  });
+
   it('writes project-scoped pane-orchestrator skills for Codex and Claude', async () => {
     const manager = new SkillCacheManager();
 
