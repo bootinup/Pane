@@ -106,6 +106,7 @@ export class SkillCacheManager {
   readonly codexPaneOrchestratorSkillPath: string;
   readonly claudePaneOrchestratorSkillPath: string;
   readonly cursorPaneOrchestratorRulePath: string;
+  readonly paneWatchScriptPath: string;
   readonly syncStatePath: string;
 
   private initialSyncTimer: NodeJS.Timeout | null = null;
@@ -125,6 +126,7 @@ export class SkillCacheManager {
     this.codexPaneOrchestratorSkillPath = path.join(this.codexProjectSkillsRoot, 'pane-orchestrator', 'SKILL.md');
     this.claudePaneOrchestratorSkillPath = path.join(this.claudeProjectSkillsRoot, 'pane-orchestrator', 'SKILL.md');
     this.cursorPaneOrchestratorRulePath = path.join(getAppDirectory(), '.cursor', 'rules', 'pane-orchestrator.mdc');
+    this.paneWatchScriptPath = path.join(getAppDirectory(), 'tools', 'watch.py');
     this.syncStatePath = path.join(this.cacheRoot, 'sync-state.json');
   }
 
@@ -316,6 +318,8 @@ export class SkillCacheManager {
     await this.writeTextFile(this.codexPaneOrchestratorSkillPath, orchestratorSkill);
     await this.writeTextFile(this.claudePaneOrchestratorSkillPath, orchestratorSkill);
     await this.writeTextFile(this.cursorPaneOrchestratorRulePath, this.toCursorRule(orchestratorSkill));
+    await this.writeTextFile(this.paneWatchScriptPath, this.buildPaneWatchScript());
+    await fs.chmod(this.paneWatchScriptPath, 0o755);
   }
 
   /** Cursor reads .cursor/rules/*.mdc, not SKILL.md files — swap the frontmatter. */
@@ -455,6 +459,7 @@ ${managedBlock}
     const skillLegendSource = path.join(this.cacheRoot, 'docs', 'readme-skill-legend.excalidraw');
     const codexProjectSkillsRoot = this.codexProjectSkillsRoot;
     const claudeProjectSkillsRoot = this.claudeProjectSkillsRoot;
+    const paneWatchScript = this.paneWatchScriptPath;
 
     return `---
 name: pane-orchestrator
@@ -475,10 +480,9 @@ You are Pane Chat, the global orchestrator for this Pane workspace.
 5. Run the doctor command from the runtime context before taking Pane actions.
 6. Reconstitute the in-flight work picture with this bounded live-state sweep
    before acting or answering a status question:
-   1. Enumerate panes through RunPane. Use pane status, recent activity, running
-      panels, and linked artifacts to determine the active working set. Include
-      active unpinned panes; pinning is only a UI favorite signal, not an
-      activity signal.
+   1. Enumerate panes through RunPane. Use panel activity status, running panels,
+      and linked artifacts to determine the active working set. Include
+      unpinned panes; pinning is a UI favorite signal, not an activity signal.
    2. If activity is ambiguous, inspect all non-archived panes before narrowing
       to the active working set. Go wider than non-archived panes only when the
       user asks.
@@ -501,12 +505,15 @@ You are Pane Chat, the global orchestrator for this Pane workspace.
    8. Report in decision-shaped terms: what moved since the user last looked,
       what is waiting on a human, and what is blocked and on what.
 
-The runtime context is generated for this exact Pane instance. If it conflicts
-with generic cached RunPane documentation, follow the runtime context.
-
 Do not claim initialization is complete until you have loaded these workflow
 references, completed the bounded live-state sweep, and can name the intended
 lifecycle for the user's task.
+
+Arm \`python3 ${paneWatchScript}\` with the Monitor tool at session start; it
+emits READY/BUSY/NEW/GONE per pane on agent-activity transitions. Do not poll
+panes by hand or screen-scrape terminal text to decide whether an agent is
+working. \`panel.activityStatus\` is the accurate activity signal;
+\`pane.status\` is not — it reports "stopped" for actively working agents.
 
 For read-only work questions, use \`pane-work-recap\` when the user asks what
 they worked on and \`pane-work-prioritizer\` when they ask what to work on next.
@@ -528,9 +535,8 @@ messages to agents. Substantive implementation belongs in delegated panes.
 
 Context is the scarce resource, and yours is the only one holding every pane at
 once. Judge claims rather than re-deriving them: check that cited evidence
-exists, that the claim follows from it, and that no gate was skipped.
-Independent diff review is what a fresh review panel is for. Cross-pane work is
-the exception only you can do, since only you see two panes holding
+exists, that the claim follows from it, and that no gate was skipped. Cross-pane
+work is the exception only you can do, since only you see two panes holding
 contradictory instructions, or a pane whose name disagrees with what it owns.
 
 Two questions catch most of what goes wrong, and both are cheap enough to ask by
@@ -579,24 +585,10 @@ little. Require every completed run to report what it assumed, and put that list
 in front of the user with the result. An assumption the design hinges on is not
 a report item: the run surfaces it as a blocker and waits.
 
-## Recommend A Lane, Then Orchestrate
-
 After discussion, recommend a lane and say what it buys in verification terms.
-The active agent's \`runpane-orchestrator\` skill owns the lanes, their triggers,
-and the overrides.
-
-The lane is the user's decision, and usually their last one before the pull
-request. Escalate a blocker, an open design fork, or an ambiguity that would
-otherwise be settled by assumption. Route everything else without asking.
-
-The hard stops below hold in every lane.
-
-## New Project / No Repo Exception
-
-If no suitable repo exists and the user asks for a new project, Pane Chat may
-create a minimal local git repository and register it with Pane. After that,
-delegate project implementation to a Pane agent through RunPane and observe the
-result from Pane state.
+The lane is the user's decision. Escalate a blocker, an open design fork, or an
+ambiguity that would otherwise be settled by assumption; route everything else
+without asking.
 
 ## Contract Precedence
 
@@ -615,26 +607,16 @@ Use one unambiguous hierarchy:
 4. Agent-specific downstream skills are authoritative for how each lifecycle
    stage is performed.
 
-If layers appear to conflict, preserve the more specific authority above instead
-of merging both instructions into a new lifecycle.
-
 ## Workflow Discipline
 
-For substantial work, greenfield projects, multi-agent work, PR preparation, or
-anything that will create or change files, load the active agent's cached
-\`runpane-orchestrator\` and follow its lifecycle contract. Do not maintain a
-second Pane-generated copy of that lifecycle.
+The active agent's cached \`runpane-orchestrator\` owns the lifecycle contract.
+Do not maintain a second Pane-generated copy of that lifecycle. When delegating,
+name the intended lifecycle stage and the relevant source artifact or brief.
 
 Pane Chat owns discussion and clarification with the user when intent is
 ambiguous, broad, creative, or multi-agent. It may distill that conversation
 into concise briefs, constraints, success criteria, repo/worktree targets, and
 autonomy boundaries before delegating the next lifecycle stage through RunPane.
-
-When delegating to agents, name the intended lifecycle stage and the relevant
-source artifact or brief. The active agent's cached \`runpane-orchestrator\`
-decides how already-authorized reversible stages advance through investigation,
-planning, implementation, implementation review, PR preparation, review feedback
-handling, PR QA, CI/re-review, and \`ready_to_merge\`.
 
 Treat review feedback as an interrupt owned by the upstream lifecycle. When it
 routes to \`gh-address-comments\`, use the implementation authority for source
@@ -648,20 +630,18 @@ advancing the upstream lifecycle.
 
 ## Pane Workflow Model
 
-Pane manages saved repositories and user-visible Panes.
-
-- Add a repository once, then use Pane to manage work against it.
+- Add a repository once, then use Pane to manage work against it. If no suitable
+  repo exists, create a minimal local git repository and register it with Pane,
+  then delegate project implementation through RunPane.
 - The initial repository Pane is not a feature worktree; it represents the main
   repository checkout and should stay aligned with main.
 - Creating a new Pane from a saved repository should normally create an
   isolated git worktree and branch for one feature, PR, or experiment.
-- Treat each worktree Pane as the working home for one agent-driven feature.
   Multiple Panes can safely touch the same code areas because they are isolated
   by worktree and branch.
 - Use extra terminal tabs/panels inside a Pane for clean-context review,
-  discussion, test automation, or follow-up agents.
-- For PR-ready work, prefer fresh Codex and Claude review panels so review
-  context is isolated from implementation context.
+  discussion, test automation, or follow-up agents. For PR-ready work, prefer
+  fresh Codex and Claude review panels.
 - After a PR is merged, the user can archive the Pane, which safely archives the
   associated worktree.
 - Pane may copy quality-of-life files such as env vars, modules, and other
@@ -672,19 +652,27 @@ Pane manages saved repositories and user-visible Panes.
 
 For Pane work:
 
-1. Run \`runpane doctor --json\` using the command and Pane data directory from
-   the runtime context.
-2. Use \`runpane agent-context --json\` when command details are needed.
-3. Use \`runpane repos list --json\`, \`runpane panes list --json\`, and
-   \`runpane panels list --pane <pane-id> --json\` to stay synchronized.
-4. Create panes or panels for the actual work with RunPane.
-5. Send the task to the delegated agent.
-6. Verify progress and completion with \`runpane panels wait\`,
+1. Use \`runpane panes list --json\` and \`runpane panels list --pane <pane-id>
+   --json\` to stay synchronized.
+2. Create panes or panels for the actual work with RunPane.
+3. Send the task to the delegated agent.
+4. Verify progress and completion with \`runpane panels wait\`,
    \`runpane panels screen\`, or \`runpane panels output\`.
-7. Report observed Pane state and results back to the user.
+5. Report observed Pane state and results back to the user.
 
-Do not report a delegated action as done until you have observed it through
-Pane state or terminal output.
+RunPane command results describe what a command attempted, not the resulting
+state. A success can leave nothing done; a failure can leave something done; a
+safety check can be checking the wrong thing. Before treating any state as
+changed or unchanged, verify the state itself:
+
+- Reconcile against \`runpane panes list --json\` before retrying a create that
+  reported failure — the pane and worktree may already exist.
+- Confirm an agent turn actually started with \`runpane panels screen\` rather
+  than trusting a submit result alone.
+- Before archiving, establish what a pane produced. Investigation, research,
+  review, and discussion panes deliver their result as terminal scrollback, not
+  files — a clean worktree does not mean empty, and archiving destroys
+  scrollback permanently.
 
 ## Local Workflow References
 
@@ -705,6 +693,364 @@ Stop before merge, deploy, release creation, publishing, version changes,
 production or destructive mutation, deleting user data, scope expansion, or
 other irreversible actions unless the user explicitly authorizes that exact
 step.
+`;
+  }
+
+  private buildPaneWatchScript(): string {
+    return `#!/usr/bin/env python3
+"""watch.py — one generalized change-monitor for Pane workspaces.
+
+Cross-platform: macOS, Windows, Linux. Python 3.8+, standard library only.
+
+Emits one line per STATE TRANSITION on stdout. Designed to be driven by a
+Monitor tool where each stdout line becomes a notification. Silent unless
+something actually changed.
+
+    python3 watch.py [--panes FILTER] [--prs owner/repo ...] [--files PATH ...]
+                     [--interval SECONDS] [--state DIR] [--once]
+
+Events emitted:
+    READY  <pane>              agent finished a turn        (active -> idle)
+    BUSY   <pane>              agent started a turn         (idle -> active)
+    NEW    <pane>              pane appeared                (catches orphaned creates)
+    GONE   <pane>              pane archived or removed
+    STUCK  <pane> :: <text>    went idle with unsubmitted composer text
+    PR READY FOR REVIEW: r#n   newly-opened PR: open, non-draft, mergeable, checks green
+    PR CHECKS FAILING:   r#n   newly-opened PR with a failing check
+    FILE   <name> (<n> lines)  a watched deliverable appeared
+
+---------------------------------------------------------------------------
+DESIGN RULES — every one of these was learned by getting it wrong in practice.
+Do not "simplify" them away.
+
+1.  SILENT BASELINE. The first pass records current state and emits nothing.
+    Without it, starting the watcher against a repo with 30 open PRs announces
+    all 30 as newly ready, and every existing pane as new.
+
+2.  USE panel.activityStatus, NEVER pane.status. pane.status reports "stopped"
+    for panes whose agent is actively working, so it cannot tell thinking from
+    finished. Measured: a pane mid-turn and a pane done twenty minutes ago both
+    report "stopped". See dcouple/Pane#514.
+
+3.  NEVER SCREEN-SCRAPE to decide whether an agent is working. Rendered
+    terminal text produces false positives and false negatives in both
+    directions. Structured fields only. The lone exception is STUCK detection,
+    which is inherently a question about what sits in the composer, and which
+    only ever adds information.
+
+4.  EMIT ON FAILURE STATES TOO. Silence must never be ambiguous between "fine"
+    and "died". GONE and CHECKS FAILING exist for exactly this.
+
+5.  NO SHELL. Every external call goes through subprocess with an argv list, so
+    quoting, spaces and Windows paths behave. No pipelines, no shell built-ins.
+---------------------------------------------------------------------------
+"""
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+IS_WINDOWS = os.name == "nt"
+
+
+def run_json(argv, timeout=45):
+    """Run a command, parse stdout as JSON. Returns None on any failure.
+
+    Never raises: a monitor must survive transient CLI/network errors rather
+    than dying and leaving the caller with silence that looks like calm.
+    """
+    try:
+        p = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            shell=False,
+        )
+    except Exception:
+        return None
+    if not p.stdout:
+        return None
+    try:
+        return json.loads(p.stdout)
+    except Exception:
+        return None
+
+
+def run_text(argv, timeout=45):
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, shell=False)
+        return p.stdout or ""
+    except Exception:
+        return ""
+
+
+def resolve_runpane():
+    """Resolve the cheapest working runpane invocation.
+
+    PERFORMANCE, and it matters a lot: \`npx --yes runpane@latest\` re-resolves the
+    package on EVERY call (~2.0s vs ~1.2s calling the CLI directly). A monitor
+    makes one call per pane plus one per watched panel, so npx overhead alone can
+    add minutes to a single pass. Prefer, in order:
+      1. a real \`runpane\` on PATH
+      2. a cached npx install's cli.js, invoked via node
+      3. npx as the last resort
+    """
+    exe = shutil.which("runpane")
+    if exe:
+        return [exe]
+
+    node = shutil.which("node")
+    if node:
+        # npx caches installs under ~/.npm/_npx/<hash>/node_modules/runpane
+        npx_cache = Path.home() / (".npm/_npx" if not IS_WINDOWS else "AppData/Local/npm-cache/_npx")
+        try:
+            candidates = sorted(
+                npx_cache.glob("*/node_modules/runpane/dist/cli.js"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if candidates:
+                return [node, str(candidates[0])]
+        except Exception:
+            pass
+
+    npx = shutil.which("npx") or ("npx.cmd" if IS_WINDOWS else "npx")
+    return [npx, "--yes", "runpane@latest"]
+
+
+def resolve_gh():
+    return shutil.which("gh") or ("gh.exe" if IS_WINDOWS else "gh")
+
+
+class State:
+    """Transition tracking, persisted so a restart does not replay history."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.data = {}
+        if self.path.exists():
+            try:
+                self.data = json.loads(self.path.read_text())
+            except Exception:
+                self.data = {}
+
+    def changed(self, key, value):
+        """True if value differs from what we last saw. Records the new value."""
+        prev = self.data.get(key)
+        if prev == value:
+            return False, prev
+        self.data[key] = value
+        return True, prev
+
+    def save(self):
+        try:
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.data))
+            tmp.replace(self.path)
+        except Exception:
+            pass
+
+
+def emit(line):
+    print(line, flush=True)
+
+
+def check_files(paths, state, first):
+    for raw in paths:
+        p = Path(raw).expanduser()
+        if not p.is_file():
+            continue
+        changed, _ = state.changed(f"file:{p}", True)
+        if not changed or first:
+            continue
+        try:
+            n = sum(1 for _ in p.open(errors="ignore"))
+        except Exception:
+            n = 0
+        emit(f"FILE   {p.name} ({n} lines)")
+
+
+def check_panes(rp, name_filter, state, first):
+    d = run_json(rp + ["panes", "list", "--json"])
+    if not d or "panes" not in d:
+        return []
+    panes = [
+        p for p in d["panes"]
+        if not name_filter or name_filter in p.get("name", "")
+    ]
+    seen = {p["id"]: p.get("name", p["id"]) for p in panes}
+
+    prev_ids = set(state.data.get("_pane_ids", []))
+    cur_ids = set(seen)
+    if not first and prev_ids:
+        for i in cur_ids - prev_ids:
+            emit(f"NEW    {seen[i]}")
+        gone = state.data.get("_pane_names", {})
+        for i in prev_ids - cur_ids:
+            emit(f"GONE   {gone.get(i, i)}")
+    state.data["_pane_ids"] = sorted(cur_ids)
+    state.data["_pane_names"] = seen
+    return panes
+
+
+def composer_text(screen_text):
+    """Return unsubmitted composer content, if the panel shows any.
+
+    Rule 3 exception: this is inherently about rendered composer content, and it
+    only ever adds information — it never decides whether an agent is working.
+    """
+    placeholders = ('Try "', "Ask Codex", "Ask Claude")
+    for line in reversed([x.strip() for x in screen_text.splitlines()]):
+        if line.startswith("❯") and len(line) > 3:
+            body = line[1:].strip()
+            if body and not any(ph in line for ph in placeholders):
+                return body[:70]
+    return None
+
+
+def cli_panels_for(rp, pane_id, state, rediscover):
+    """CLI panel ids for a pane, cached.
+
+    PERFORMANCE: \`panels list\` costs a full CLI invocation, and a pane's panel
+    layout almost never changes. Discovering it every pass turned one pass into
+    hundreds of calls. Cache the mapping and re-discover only occasionally, or
+    when the cache is empty.
+    """
+    key = f"panels:{pane_id}"
+    cached = state.data.get(key)
+    if cached is not None and not rediscover:
+        return cached
+
+    pl = run_json(rp + ["panels", "list", "--pane", pane_id, "--json"])
+    if not pl:
+        return cached or []
+
+    ids = []
+    for panel in pl.get("panels", []):
+        pid_ = panel.get("panelId")
+        if not pid_:
+            continue
+        # Only terminal-ish panels can host an agent; explorer/diff never do.
+        if panel.get("type") in (None, "terminal") or panel.get("isCliPanel"):
+            ids.append(pid_)
+    state.data[key] = ids
+    return ids
+
+
+def check_activity(rp, panes, state, first, rediscover=False):
+    for pane in panes:
+        pid, pname = pane["id"], pane.get("name", pane["id"])
+        for panel_id in cli_panels_for(rp, pid, state, rediscover):
+            # \`panels wait\` returns the structured activity state. Rule 2.
+            r = run_json(
+                rp + ["panels", "wait", "--panel", panel_id,
+                      "--for", "idle", "--timeout-ms", "1200", "--json"],
+                timeout=30,
+            )
+            if not r:
+                continue
+            s = r.get("state") or {}
+            if not s.get("isCliPanel"):
+                continue           # explorer/diff panels carry no agent activity
+            act = s.get("activityStatus")
+            if act not in ("active", "idle"):
+                continue
+            changed, prev = state.changed(f"act:{panel_id}", act)
+            if not changed or first or prev is None:
+                continue
+            if act == "idle":
+                emit(f"READY  {pname}")
+                held = composer_text((r.get("screen") or {}).get("text", ""))
+                if held:
+                    emit(f"STUCK  {pname} :: {held}")
+            else:
+                emit(f"BUSY   {pname}")
+
+
+def check_prs(gh, repos, state, first):
+    for repo in repos:
+        d = run_json([
+            gh, "pr", "list", "--repo", repo, "--limit", "40",
+            "--json", "number,isDraft,mergeable,title",
+        ])
+        if d is None:
+            continue
+        bkey = f"_baseline:{repo}"
+        if first or bkey not in state.data:
+            # Rule 1: everything already open is pre-existing, never reported.
+            state.data[bkey] = [p["number"] for p in d]
+            continue
+        baseline = set(state.data.get(bkey, []))
+        for p in d:
+            num = p["number"]
+            if num in baseline:
+                continue
+            out = run_text([gh, "pr", "checks", str(num), "--repo", repo])
+            buckets = [ln.split("\\t")[1] for ln in out.splitlines() if "\\t" in ln]
+            failing = any("fail" in b for b in buckets)
+            pending = any("pending" in b for b in buckets)
+            if not p["isDraft"] and p.get("mergeable") == "MERGEABLE" \\
+                    and not failing and not pending:
+                st = "ready"
+            elif failing:
+                st = "failing"
+            else:
+                st = "waiting"
+            changed, _ = state.changed(f"pr:{repo}:{num}", st)
+            if not changed:
+                continue
+            title = p.get("title", "")[:56]
+            if st == "ready":
+                emit(f"PR READY FOR REVIEW: {repo}#{num} — {title}")
+            elif st == "failing":
+                emit(f"PR CHECKS FAILING:   {repo}#{num} — {title}")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Generalized Pane workspace monitor.")
+    ap.add_argument("--panes", default="", help="substring filter on pane name; empty = all")
+    ap.add_argument("--prs", nargs="*", default=[], help="repos to watch, e.g. owner/name")
+    ap.add_argument("--files", nargs="*", default=[], help="deliverable paths to watch for")
+    ap.add_argument("--interval", type=int, default=60)
+    ap.add_argument("--state", default=str(Path.home() / ".pane" / "tools" / "watch-state.json"))
+    ap.add_argument("--once", action="store_true", help="single pass (seeds baseline), for testing")
+    ap.add_argument("--no-panes", action="store_true", help="skip pane watching entirely")
+    args = ap.parse_args()
+
+    rp = resolve_runpane()
+    gh = resolve_gh()
+    state = State(Path(args.state))
+    first = "_seeded" not in state.data
+
+    while True:
+        try:
+            check_files(args.files, state, first)
+            if not args.no_panes:
+                panes = check_panes(rp, args.panes, state, first)
+                check_activity(rp, panes, state, first)
+            if args.prs:
+                check_prs(gh, args.prs, state, first)
+        except Exception as e:
+            # Never die on a transient error — silence would read as "all calm".
+            emit(f"WATCH ERROR: {type(e).__name__}: {e}")
+        if first:
+            state.data["_seeded"] = True
+            first = False
+        state.save()
+        if args.once:
+            return
+        time.sleep(args.interval)
+
+
+if __name__ == "__main__":
+    main()
 `;
   }
 
