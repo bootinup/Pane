@@ -784,7 +784,15 @@ describe('runpane IPC handlers', () => {
   });
 
   it('zero-fills a known pane outside the report window', async () => {
-    const outside = { ...session, id: 'outside', name: 'Outside', archived: true };
+    const outside = {
+      ...session,
+      id: 'outside',
+      name: 'Outside',
+      archived: true,
+      worktree_path: session.worktreePath,
+      project_id: session.projectId,
+      created_at: '2026-01-01T00:00:00.000Z',
+    };
     const services = createServices({
       // SAFETY: This fixture preserves the default service shape and overrides only the tested lookup.
       databaseService: {
@@ -797,6 +805,41 @@ describe('runpane IPC handlers', () => {
     expect(result).toMatchObject({
       panes: [{ paneId: outside.id, paneName: outside.name, totalTokens: 0, byModel: [] }],
     });
+  });
+
+  it('treats a zone-less SQLite created_at as UTC in the fallback pane result', async () => {
+    const originalTimezone = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    try {
+      const outside = {
+        ...session,
+        id: 'outside-sqlite-time',
+        name: 'Outside SQLite time',
+        archived: true,
+        worktree_path: session.worktreePath,
+        project_id: session.projectId,
+        created_at: '2026-08-27 12:00:00',
+      };
+      const services = createServices({
+        // SAFETY: This fixture preserves the default service shape and overrides only the tested lookup.
+        databaseService: {
+          ...createServices().databaseService,
+          getSession: vi.fn(() => outside),
+        } as AppServices['databaseService'],
+      });
+
+      const result = await createRegistry(services).invoke('runpane:panes:cost', [{ paneId: outside.id }]);
+
+      expect(result).toMatchObject({
+        panes: [{
+          paneId: outside.id,
+          createdAtMs: Date.UTC(2026, 7, 27, 12, 0, 0),
+        }],
+      });
+    } finally {
+      if (originalTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTimezone;
+    }
   });
 
   it('rejects an unknown pane id', async () => {

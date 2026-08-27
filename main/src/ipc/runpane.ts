@@ -324,7 +324,7 @@ export function registerRunpaneHandlers(
             worktreePath: session.worktree_path,
             repoId: session.project_id ?? null,
             archived: session.archived === true,
-            createdAtMs: Date.parse(session.created_at),
+            createdAtMs: parseSessionTimestampMs(session.created_at),
             ...emptyPaneCostSlice(),
           }];
         }
@@ -2018,6 +2018,11 @@ function emptyPaneCostSlice() {
     cacheHitRate: 0,
     byModel: [],
   };
+}
+
+function parseSessionTimestampMs(value: string): number {
+  const sqliteTimestamp = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value);
+  return Date.parse(sqliteTimestamp ? `${value.replace(' ', 'T')}Z` : value);
 }
 
 function parseWorkspaceWaitRequest(value: PaneCommandValue): RunpaneWorkspaceWaitRequest {
