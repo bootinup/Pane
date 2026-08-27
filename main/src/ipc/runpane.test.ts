@@ -381,6 +381,42 @@ describe('runpane IPC handlers', () => {
     );
   });
 
+  it('advances a truncated named cursor when its filter excludes retained entries', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-runpane-cursor-test-'));
+    tempDirs.push(directory);
+    const workspaceJournal = new WorkspaceJournal({ capacity: 2 });
+    const workspaceCursorStore = new WorkspaceCursorStore(
+      path.join(directory, 'workspace-cursors.json'),
+    );
+    workspaceCursorStore.create('monitor', 0, workspaceJournal.epoch);
+    const registry = createRegistry(createServices({ workspaceJournal, workspaceCursorStore }));
+    for (const paneId of ['one', 'two', 'three']) {
+      workspaceJournal.append({ kind: 'pane.created', paneId, paneName: paneId, source: 'session' });
+    }
+
+    const truncated = await registry.invoke('runpane:workspace:wait', [{
+      as: 'monitor',
+      kinds: ['panel.exited'],
+      timeoutMs: 0,
+    }]);
+    const resumed = await registry.invoke('runpane:workspace:wait', [{
+      as: 'monitor',
+      kinds: ['panel.exited'],
+      timeoutMs: 0,
+    }]);
+
+    expect(truncated).toMatchObject({
+      generation: 3,
+      entries: [],
+      timedOut: true,
+      dropped: 1,
+      reset: { reason: 'cursor-truncated' },
+    });
+    expect(resumed).toMatchObject({ generation: 3, entries: [], timedOut: true });
+    expect(resumed.dropped).toBeUndefined();
+    expect(resumed.reset).toBeUndefined();
+  });
+
   it('dry-runs adding an existing git repository without saving it', async () => {
     const repoPath = createTempGitRepo('pane-addon');
     const services = createServices({

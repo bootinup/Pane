@@ -797,7 +797,7 @@ export function registerRunpaneHandlers(
           .filter(entry => workspaceEntryMatches(entry, filter));
       }
 
-      if (normalized.as && !waited.timedOut) {
+      if (normalized.as && (!waited.timedOut || waited.dropped !== undefined)) {
         workspaceCursorStore.advance(
           normalized.as,
           waited.generation,

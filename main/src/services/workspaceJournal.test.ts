@@ -59,6 +59,7 @@ describe('WorkspaceJournal', () => {
       resolvePanel: panelId => ({
         panelId,
         paneId: 'pane-1',
+        isCliPanel: true,
         agentType: 'codex',
         lastActivityAt: '2026-08-26T10:00:00.000Z',
         heldInput: 'ship it',
@@ -76,7 +77,9 @@ describe('WorkspaceJournal', () => {
   });
 
   it('forgets panel state when a terminal exits', () => {
-    const journal = new WorkspaceJournal();
+    const journal = new WorkspaceJournal({
+      resolvePanel: panelId => ({ panelId, paneId: 'pane-1', isCliPanel: true }),
+    });
     journal.send('session:created', { id: 'pane-1', name: 'Monitor' });
     journal.send('panel:agentStatus', {
       panelId: 'panel-1',
@@ -98,6 +101,31 @@ describe('WorkspaceJournal', () => {
       'pane.created',
       'agent.busy',
       'panel.exited',
+      'agent.busy',
+    ]);
+  });
+
+  it('ignores agent-status events from ordinary shell panels', () => {
+    let isCliPanel = false;
+    const journal = new WorkspaceJournal({
+      resolvePanel: panelId => ({ panelId, paneId: 'pane-1', isCliPanel }),
+    });
+    journal.send('session:created', { id: 'pane-1', name: 'Monitor' });
+    journal.send('panel:agentStatus', {
+      panelId: 'panel-1',
+      sessionId: 'pane-1',
+      state: 'working',
+    });
+
+    isCliPanel = true;
+    journal.send('panel:agentStatus', {
+      panelId: 'panel-1',
+      sessionId: 'pane-1',
+      state: 'working',
+    });
+
+    expect(journal.readAfter(0).entries.map(entry => entry.kind)).toEqual([
+      'pane.created',
       'agent.busy',
     ]);
   });

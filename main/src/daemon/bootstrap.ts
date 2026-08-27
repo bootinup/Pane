@@ -42,6 +42,7 @@ import { terminalPanelManager } from '../services/terminalPanelManager';
 import { WorkspaceJournal } from '../services/workspaceJournal';
 import { WorkspaceStateReader } from '../services/workspaceStateReader';
 import { WorkspaceCursorStore } from '../services/workspaceCursorStore';
+import { extractWorkspaceHeldInput } from '../services/workspaceHeldInput';
 import { boundary, decodeBoundary } from '../../../shared/validation/boundaryDecoder';
 
 interface PaneDaemonHostOptions {
@@ -215,13 +216,15 @@ export async function createPaneDaemonHost(options: PaneDaemonHostOptions): Prom
       const snapshot = terminalPanelManager.getTerminalSnapshot(panelId);
       const customState = decodeBoundary(panel.state.customState ?? {}, boundary.object({
         agentType: boundary.optional(boundary.string),
+        isCliPanel: boundary.optional(boundary.boolean),
       }));
       return {
         panelId,
         paneId: panel.sessionId,
+        isCliPanel: snapshot?.isCliPanel ?? customState.isCliPanel ?? false,
         agentType: snapshot?.agentType ?? customState.agentType,
         lastActivityAt: snapshot?.lastActivityTime,
-        heldInput: snapshot?.screenText ? extractHeldInput(snapshot.screenText) : undefined,
+        heldInput: snapshot?.screenText ? extractWorkspaceHeldInput(snapshot.screenText) : undefined,
       };
     },
   });
@@ -373,13 +376,4 @@ export async function createPaneDaemonHost(options: PaneDaemonHostOptions): Prom
       logger.close();
     },
   };
-}
-
-function extractHeldInput(screenText: string): string | undefined {
-  const lines = screenText.split(/\r?\n/u);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const match = lines[index].trim().match(/^[>›❯▌]\s*(.+)$/u);
-    if (match?.[1] && !/^ask (?:codex|claude)/iu.test(match[1])) return match[1].slice(0, 120);
-  }
-  return undefined;
 }

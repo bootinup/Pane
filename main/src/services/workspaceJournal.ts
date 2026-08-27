@@ -18,6 +18,7 @@ export interface WorkspacePaneMetadata {
 interface WorkspacePanelMetadata {
   panelId: string;
   paneId: string;
+  isCliPanel?: boolean;
   agentType?: string;
   lastActivityAt?: string;
   heldInput?: string;
@@ -239,6 +240,8 @@ export class WorkspaceJournal implements PaneEventSink {
     reason?: string | null;
   }): void {
     const { panelId, sessionId: paneId, state } = payload;
+    const panel = this.resolvePanel?.(panelId);
+    if (!panel?.isCliPanel) return;
 
     const previous = this.stateByPanel.get(panelId);
     this.stateByPanel.set(panelId, state);
@@ -248,7 +251,6 @@ export class WorkspaceJournal implements PaneEventSink {
     if (!kind) return;
     const pane = this.lookupPane(paneId);
     if (!pane) return;
-    const panel = this.resolvePanel?.(panelId);
     const now = this.now();
     const lastActivityMs = panel?.lastActivityAt ? Date.parse(panel.lastActivityAt) : Number.NaN;
     const settledMs = kind === 'agent.ready' && Number.isFinite(lastActivityMs)

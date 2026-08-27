@@ -750,6 +750,36 @@ def run_text(argv, timeout=45):
         return ""
 
 
+def resolve_runpane():
+    executable = shutil.which("runpane")
+    if executable:
+        return [executable]
+
+    node = shutil.which("node")
+    if node:
+        for root in (Path.cwd(), *Path.cwd().parents):
+            local_cli = root / "packages" / "runpane" / "dist" / "cli.js"
+            if local_cli.is_file():
+                return [node, str(local_cli)]
+
+        npx_cache = Path.home() / (
+            "AppData/Local/npm-cache/_npx" if os.name == "nt" else ".npm/_npx"
+        )
+        try:
+            candidates = sorted(
+                npx_cache.glob("*/node_modules/runpane/dist/cli.js"),
+                key=lambda candidate: candidate.stat().st_mtime,
+                reverse=True,
+            )
+            if candidates:
+                return [node, str(candidates[0])]
+        except Exception:
+            pass
+
+    npx = shutil.which("npx") or ("npx.cmd" if os.name == "nt" else "npx")
+    return [npx, "--yes", "runpane@latest"]
+
+
 def resolve_gh():
     return shutil.which("gh") or ("gh.exe" if os.name == "nt" else "gh")
 
@@ -827,8 +857,8 @@ def emit_pane_entry(entry):
 
 
 def watch_panes(name_filter, once):
-    command = [
-        "runpane", "watch", "--as", "watch.py", "--json",
+    command = resolve_runpane() + [
+        "watch", "--as", "watch.py", "--json",
         "--include-held-input", "--timeout-ms", "0" if once else "60000",
     ]
     if name_filter:
