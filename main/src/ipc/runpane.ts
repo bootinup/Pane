@@ -80,9 +80,16 @@ import type {
   RunpaneResolvedTool,
   RunpaneToolSpec,
   RunpaneWorktreeCleanupState,
+  RunpaneWorkspaceEntryKind,
+  RunpaneWorkspaceStateResult,
+  RunpaneWorkspaceWaitRequest,
+  RunpaneWorkspaceWaitResult,
 } from '../../../shared/types/runpaneOrchestration';
 import { getAppDirectory } from '../utils/appDirectory';
 import { collectRemoteDaemonExecutableHealth } from '../daemon/remoteDaemonExecutableHealth';
+import { WorkspaceJournal, type WorkspaceJournalFilter } from '../services/workspaceJournal';
+import { WorkspaceStateReader } from '../services/workspaceStateReader';
+import { WorkspaceCursorStore } from '../services/workspaceCursorStore';
 
 const RUNPANE_CHANNELS = [
   'runpane:doctor',
@@ -101,6 +108,8 @@ const RUNPANE_CHANNELS = [
   'runpane:panels:submit',
   'runpane:panels:submit-composer',
   'runpane:panels:wait',
+  'runpane:workspace:state',
+  'runpane:workspace:wait',
   'runpane:agents:doctor',
 ] as const;
 
@@ -117,6 +126,20 @@ const MAX_CREATE_SUBMIT_ATTEMPTS = 3;
 const CREATE_SUBMIT_CONFIRMATION_DELAY_MS = 400;
 const DEFAULT_ARCHIVE_CLEANUP_TIMEOUT_MS = 30_000;
 const DEFAULT_ARCHIVE_CLEANUP_POLL_INTERVAL_MS = 200;
+const DEFAULT_WORKSPACE_WAIT_TIMEOUT_MS = 60_000;
+const MAX_WORKSPACE_WAIT_TIMEOUT_MS = 120_000;
+const DEFAULT_WORKSPACE_WAIT_LIMIT = 256;
+const WORKSPACE_CONSUMER_PATTERN = /^[A-Za-z0-9._-]{1,64}$/u;
+const MUTATING_RUNPANE_ACTIONS = new Set([
+  'panes:create',
+  'panes:archive',
+  'panes:pin',
+  'panes:rename',
+  'panels:create',
+  'panels:input',
+  'panels:submit',
+  'panels:submit-composer',
+]);
 
 export function registerRunpaneHandlers(
   _ipcMain: IpcMain,
@@ -124,6 +147,18 @@ export function registerRunpaneHandlers(
   commandRegistry: PaneCommandRegistry,
 ): void {
   const { databaseService, sessionManager, taskQueue, configManager } = services;
+  const workspaceJournal = services.workspaceJournal ?? createWorkspaceJournal(services);
+  const workspaceStateReader = services.workspaceStateReader ?? new WorkspaceStateReader(
+    sessionManager,
+    () => workspaceJournal.epoch,
+    () => workspaceJournal.generation,
+  );
+  const workspaceCursorStore = services.workspaceCursorStore ?? new WorkspaceCursorStore(
+    path.join(getAppDirectory(), 'workspace-cursors.json'),
+  );
+  services.workspaceJournal = workspaceJournal;
+  services.workspaceStateReader = workspaceStateReader;
+  services.workspaceCursorStore = workspaceCursorStore;
 
   commandRegistry.register('runpane:doctor', async (): Promise<RunpaneDoctorResult> => {
     return withRunpaneAction(services, 'doctor', {}, () => {
@@ -684,6 +719,107 @@ export function registerRunpaneHandlers(
     }));
   });
 
+  commandRegistry.register('runpane:workspace:state', async (request: PaneCommandValue = {}): Promise<RunpaneWorkspaceStateResult> => {
+    return withRunpaneAction(services, 'workspace:state', {}, () => {
+      const normalized = parsePaneListRequest(request);
+      const project = normalized.repo
+        ? resolveRepoSelector(databaseService.getAllProjects(), normalized.repo)
+        : undefined;
+      return workspaceStateReader.read(project?.id);
+    }, result => ({ resultCount: result.entries.length }));
+  });
+
+  commandRegistry.register('runpane:workspace:wait', async (request: PaneCommandValue = {}): Promise<RunpaneWorkspaceWaitResult> => {
+    return withRunpaneAction(services, 'workspace:wait', {}, async () => {
+      const normalized = parseWorkspaceWaitRequest(request);
+      const project = normalized.repo
+        ? resolveRepoSelector(databaseService.getAllProjects(), normalized.repo)
+        : undefined;
+      const filter: WorkspaceJournalFilter = {
+        kinds: normalized.kinds,
+        paneIds: normalized.paneIds,
+        repoId: project?.id,
+        nameContains: normalized.nameContains,
+        includeHeldInput: normalized.includeHeldInput,
+      };
+      const timeoutMs = Math.min(normalized.timeoutMs ?? DEFAULT_WORKSPACE_WAIT_TIMEOUT_MS, MAX_WORKSPACE_WAIT_TIMEOUT_MS);
+      const limit = normalized.limit ?? DEFAULT_WORKSPACE_WAIT_LIMIT;
+      let cursor = normalized.since ?? workspaceJournal.generation;
+      let reset: RunpaneWorkspaceWaitResult['reset'];
+
+      if (normalized.as) {
+        const evicted = workspaceCursorStore.evictStale();
+        let named = workspaceCursorStore.get(normalized.as);
+        if (!named) {
+          cursor = normalized.from === 'earliest'
+            ? Math.max(0, workspaceJournal.oldestGeneration - 1)
+            : workspaceJournal.generation;
+          workspaceCursorStore.create(normalized.as, cursor, workspaceJournal.epoch);
+          reset = { reason: evicted.includes(normalized.as) ? 'unknown-consumer' : 'first-use' };
+        } else if (named.epoch !== workspaceJournal.epoch) {
+          cursor = workspaceJournal.generation;
+          workspaceCursorStore.create(normalized.as, cursor, workspaceJournal.epoch);
+          reset = { reason: 'epoch-changed' };
+        } else {
+          named = workspaceCursorStore.commitPending(normalized.as) ?? named;
+          cursor = named.gen;
+        }
+      }
+
+      if (reset) {
+        const baseline = workspaceStateReader.read(project?.id).entries
+          .filter(entry => workspaceEntryMatches(entry, filter))
+          .map(entry => reset?.reason === 'epoch-changed' ? { ...entry, changedWhileAway: true as const } : entry);
+        return {
+          ok: true,
+          epoch: workspaceJournal.epoch,
+          generation: workspaceJournal.generation,
+          entries: baseline,
+          timedOut: false,
+          reset,
+          nextCommand: workspaceNextCommand(normalized, workspaceJournal.generation),
+        };
+      }
+
+      const waited = await workspaceJournal.waitAfter(
+        cursor,
+        filter,
+        timeoutMs,
+        limit,
+        normalized.as ?? 'anonymous',
+      );
+      if (waited.dropped) {
+        reset = { reason: 'cursor-truncated' };
+      }
+      let entries = waited.entries;
+      if (reset) {
+        entries = workspaceStateReader.read(project?.id).entries
+          .filter(entry => workspaceEntryMatches(entry, filter));
+      }
+
+      if (normalized.as && (!waited.timedOut || waited.dropped !== undefined)) {
+        workspaceCursorStore.advance(
+          normalized.as,
+          waited.generation,
+          workspaceJournal.epoch,
+          !normalized.ackNow,
+        );
+      }
+
+      return {
+        ok: true,
+        epoch: workspaceJournal.epoch,
+        generation: waited.generation,
+        entries,
+        timedOut: waited.timedOut,
+        dropped: waited.dropped,
+        reset,
+        nextCommand: workspaceNextCommand(normalized, waited.generation),
+      };
+    }, result => ({ resultCount: result.entries.length, timedOut: result.timedOut }), result =>
+      result.entries.length > 0 || result.reset !== undefined);
+  });
+
   commandRegistry.register('runpane:agents:doctor', async (request: PaneCommandValue): Promise<RunpaneAgentDoctorResult> => {
     return withRunpaneAction(services, 'agents:doctor', {}, async () => {
       const normalized = parseAgentDoctorRequest(request);
@@ -739,8 +875,8 @@ function sessionToPaneSummary(session: Session, project: Project): RunpanePaneSu
 
 function resolveAggregatedAgentStatus(panels: readonly ToolPanel[]): RunpanePanelActivityStatus {
   for (const panel of panels) {
-    const snapshot = terminalPanelManager.getTerminalSnapshot(panel.id);
-    if (snapshot?.activityStatus === 'active') {
+    const state = terminalPanelManager.getAgentStatus(panel.id);
+    if (state === 'working' || state === 'blocked') {
       return 'active';
     }
   }
@@ -944,7 +1080,6 @@ async function submitCreateComposerInput(
   for (let attempt = 1; attempt <= MAX_CREATE_SUBMIT_ATTEMPTS; attempt += 1) {
     attempts = attempt;
     const beforeScreen = await buildPanelScreenResult(panel, DEFAULT_PANEL_SCREEN_LIMIT);
-    const beforeWasActive = beforeScreen.state.activityStatus === 'active';
     const outputGenerationBeforeSubmit = terminalPanelManager.getOutputGeneration(panel.id);
     terminalPanelManager.writeToTerminal(panel.id, submit.input);
     const attemptStartedAt = Date.now();
@@ -959,16 +1094,15 @@ async function submitCreateComposerInput(
         stagedText: input,
       });
 
-      const activityTransitioned = afterScreen.state.activityStatus === 'active' && !beforeWasActive;
-      if (lastVerdict === 'cleared' && (activityTransitioned || afterScreen.state.activityStatus === 'active')) {
+      if (lastVerdict === 'cleared' && panelHasFreshOutputSince(panel.id, outputGenerationBeforeSubmit)) {
         return {
           delivered: true,
           submitted: true,
           inputBytes: Buffer.byteLength(input, 'utf8'),
           strategy: submit.strategy,
           sequenceName: submit.sequenceName,
-          verifiedSubmitted: !beforeWasActive,
-          verification: beforeWasActive ? 'unverifiable' as const : 'observed' as const,
+          verifiedSubmitted: true,
+          verification: 'observed' as const,
           staged: false,
           attempts,
           sentAt: new Date().toISOString(),
@@ -1478,8 +1612,9 @@ async function submitComposerForPanel(
   const beforeScreen = await buildPanelScreenResult(panel, DEFAULT_PANEL_SCREEN_LIMIT);
   const state = beforeScreen.state;
   const submit = resolveComposerSubmit(strategy, state.agentType);
+  const outputGenerationBeforeSubmit = terminalPanelManager.getOutputGeneration(panel.id);
   terminalPanelManager.writeToTerminal(panel.id, submit.input);
-  const verification = await verifyComposerSubmitted(panel, beforeScreen);
+  const verification = await verifyComposerSubmitted(panel, beforeScreen, outputGenerationBeforeSubmit);
 
   return {
     ok: verification.ok,
@@ -1499,6 +1634,7 @@ async function submitComposerForPanel(
 async function verifyComposerSubmitted(
   panel: ToolPanel,
   beforeScreen: RunpanePanelScreenResult,
+  outputGenerationBeforeSubmit: number,
 ): Promise<{
   ok: boolean;
   verifiedSubmitted: boolean;
@@ -1509,7 +1645,7 @@ async function verifyComposerSubmitted(
   if (!beforeHadComposerPrompt && !beforeScreen.text.trim()) {
     return { ok: true, verifiedSubmitted: false };
   }
-  const beforeWasActive = beforeScreen.state.activityStatus === 'active';
+  const stagedText = composerEvidenceText(beforeScreen.text);
   let latestScreen = beforeScreen;
   const startedAt = Date.now();
 
@@ -1517,7 +1653,14 @@ async function verifyComposerSubmitted(
     await sleep(DEFAULT_COMPOSER_VERIFY_INTERVAL_MS);
     latestScreen = await buildPanelScreenResult(panel, DEFAULT_PANEL_SCREEN_LIMIT);
 
-    if (latestScreen.state.activityStatus === 'active' && !beforeWasActive) {
+    const verdict = assessComposerEvidence({
+      beforeText: beforeScreen.text,
+      afterText: latestScreen.text,
+      stagedText,
+    });
+    const hasFreshOutput = panelHasFreshOutputSince(panel.id, outputGenerationBeforeSubmit);
+
+    if (verdict === 'cleared' && hasFreshOutput) {
       return { ok: true, verifiedSubmitted: true, verification: 'observed' };
     }
 
@@ -1531,7 +1674,7 @@ async function verifyComposerSubmitted(
     return {
       ok: false,
       verifiedSubmitted: false,
-      verification: beforeWasActive ? 'unverifiable' : undefined,
+      verification: panelHasFreshOutputSince(panel.id, outputGenerationBeforeSubmit) ? 'unverifiable' : undefined,
       blocked: {
         kind: 'agent-prompt',
         message: 'Pane sent the composer submit sequence, but the prompt still appears to be sitting in the composer.',
@@ -1540,11 +1683,21 @@ async function verifyComposerSubmitted(
     };
   }
 
-  if (beforeWasActive) {
+  if (panelHasFreshOutputSince(panel.id, outputGenerationBeforeSubmit)) {
     return { ok: true, verifiedSubmitted: false, verification: 'unverifiable' };
   }
 
   return { ok: true, verifiedSubmitted: false };
+}
+
+function composerEvidenceText(text: string): string {
+  const lines = text.split(/\r?\n/u);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const match = lines[index].trim().match(/^[>›❯▌]\s*(.+)$/u);
+    if (match?.[1]) return match[1];
+  }
+  const pasted = text.match(/\[Pasted (?:Content|text)[^\]]*\]/iu);
+  return pasted?.[0] ?? '';
 }
 
 function looksLikePendingComposer(text: string): boolean {
@@ -1776,6 +1929,68 @@ function parsePaneListRequest(value: PaneCommandValue): RunpanePaneListRequest {
   return {
     repo: parseRepoSelector(value.repo),
   };
+}
+
+function parseWorkspaceWaitRequest(value: PaneCommandValue): RunpaneWorkspaceWaitRequest {
+  if (!isRecord(value)) throw new Error('Workspace wait request must be an object');
+  const consumer = optionalString(value.as)?.trim();
+  if (consumer && !WORKSPACE_CONSUMER_PATTERN.test(consumer)) {
+    throw new Error('Workspace wait as must contain 1-64 letters, numbers, dots, underscores, or hyphens');
+  }
+  const since = parseNonNegativeInteger(value.since, 'since');
+  if (consumer && since !== undefined) throw new Error('Workspace wait request cannot include both as and since');
+  if (value.from !== undefined && value.from !== 'now' && value.from !== 'earliest') {
+    throw new Error('Workspace wait from must be now or earliest');
+  }
+
+  return {
+    since,
+    as: consumer,
+    from: value.from === 'earliest' ? 'earliest' : value.from === 'now' ? 'now' : undefined,
+    timeoutMs: parseNonNegativeInteger(value.timeoutMs, 'timeoutMs'),
+    limit: parsePositiveInteger(value.limit, 'limit'),
+    kinds: parseWorkspaceKinds(value.kinds),
+    paneIds: parseStringArray(value.paneIds, 'paneIds'),
+    repo: value.repo === undefined || value.repo === null || value.repo === '' ? undefined : parseRepoSelector(value.repo),
+    nameContains: optionalString(value.nameContains),
+    ackNow: optionalBoolean(value.ackNow),
+    includeHeldInput: optionalBoolean(value.includeHeldInput),
+  };
+}
+
+const workspaceEntryKindSchema = boundary.enumeration(
+  'agent.ready',
+  'agent.busy',
+  'agent.blocked',
+  'agent.unknown',
+  'pane.created',
+  'pane.gone',
+  'panel.exited',
+);
+
+function parseWorkspaceKinds(value: PaneCommandValue): RunpaneWorkspaceEntryKind[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  return decodeBoundary(value, boundary.array(workspaceEntryKindSchema));
+}
+
+function parseStringArray(value: PaneCommandValue, field: string): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  try {
+    return decodeBoundary(value, boundary.array(boundary.string))
+      .map(item => item.trim())
+      .filter(Boolean);
+  } catch {
+    throw new Error(`Workspace wait ${field} must be an array of strings`);
+  }
+}
+
+function parseNonNegativeInteger(value: PaneCommandValue, field: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  const decoded = decodeBoundary(value, boundary.number);
+  if (!Number.isInteger(decoded) || decoded < 0) {
+    throw new Error(`${field} must be a non-negative integer`);
+  }
+  return decoded;
 }
 
 function parsePaneCreateRequest(value: PaneCommandValue): RunpanePaneCreateRequest {
@@ -2554,10 +2769,17 @@ async function withRunpaneAction<T extends { ok: boolean }>(
   metadata: RunpaneActionMetadata,
   handler: () => Promise<T> | T,
   resultMetadata?: (result: T) => RunpaneActionMetadata,
+  shouldTrackResult: (result: T) => boolean = () => true,
 ): Promise<T> {
   const startedAt = Date.now();
+  const generation = MUTATING_RUNPANE_ACTIONS.has(action)
+    ? services.workspaceJournal?.generation
+    : undefined;
   try {
     const result = await handler();
+    if (generation !== undefined && !('dryRun' in result && result.dryRun === true)) {
+      Object.assign(result, { generation });
+    }
     const commandOk = result.ok;
     const actionMetadata: RunpaneActionMetadata = {
       ...metadata,
@@ -2566,7 +2788,9 @@ async function withRunpaneAction<T extends { ok: boolean }>(
     if (resultMetadata) {
       Object.assign(actionMetadata, resultMetadata(result));
     }
-    trackRunpaneAction(services, action, 'success', Date.now() - startedAt, actionMetadata);
+    if (shouldTrackResult(result)) {
+      trackRunpaneAction(services, action, 'success', Date.now() - startedAt, actionMetadata);
+    }
     return result;
   } catch (error) {
     trackRunpaneAction(services, action, 'failure', Date.now() - startedAt, {
@@ -2575,6 +2799,64 @@ async function withRunpaneAction<T extends { ok: boolean }>(
     }, error);
     throw error;
   }
+}
+
+function createWorkspaceJournal(services: AppServices): WorkspaceJournal {
+  const journal = new WorkspaceJournal({
+    resolvePane: (paneId) => {
+      const session = services.sessionManager.getSession(paneId);
+      if (!session) return undefined;
+      const project = services.sessionManager.getProjectForSession(paneId);
+      return {
+        paneId,
+        paneName: session.name,
+        repoId: project?.id,
+        repoName: project?.name,
+        worktreePath: session.worktreePath,
+      };
+    },
+    resolvePanel: (panelId) => {
+      const panel = panelManager.getPanel(panelId);
+      if (!panel) return undefined;
+      const snapshot = terminalPanelManager.getTerminalSnapshot(panelId);
+      const customState = isRecord(panel.state.customState) ? panel.state.customState : {};
+      return {
+        panelId,
+        paneId: panel.sessionId,
+        agentType: snapshot?.agentType ?? optionalString(customState.agentType),
+        lastActivityAt: snapshot?.lastActivityTime,
+        heldInput: snapshot?.screenText ? composerEvidenceText(snapshot.screenText) : undefined,
+      };
+    },
+  });
+  const sessions = services.sessionManager.getAllSessions();
+  for (const session of sessions) {
+    const project = services.sessionManager.getProjectForSession(session.id);
+    journal.rememberPane({
+      paneId: session.id,
+      paneName: session.name,
+      repoId: project?.id,
+      repoName: project?.name,
+      worktreePath: session.worktreePath,
+    });
+  }
+  return journal;
+}
+
+function workspaceEntryMatches(
+  entry: { kind: RunpaneWorkspaceEntryKind; paneId: string; repoId?: number; paneName: string },
+  filter: WorkspaceJournalFilter,
+): boolean {
+  if (filter.kinds && !filter.kinds.includes(entry.kind)) return false;
+  if (filter.paneIds && !filter.paneIds.includes(entry.paneId)) return false;
+  if (filter.repoId !== undefined && entry.repoId !== filter.repoId) return false;
+  if (filter.nameContains && !entry.paneName.toLocaleLowerCase().includes(filter.nameContains.toLocaleLowerCase())) return false;
+  return true;
+}
+
+function workspaceNextCommand(request: RunpaneWorkspaceWaitRequest, generation: number): string {
+  const cursor = request.as ? `--as ${request.as}` : `--since ${generation}`;
+  return `runpane watch ${cursor} --json`;
 }
 
 function trackRunpaneAction(

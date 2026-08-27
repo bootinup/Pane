@@ -349,6 +349,9 @@
         "repos add",
         "panes",
         "panes list",
+        "workspace",
+        "workspace state",
+        "watch",
         "panes create",
         "panes archive",
         "panes pin",
@@ -400,6 +403,15 @@
           "$ref": "#/$defs/helpLines"
         },
         "panes list": {
+          "$ref": "#/$defs/helpLines"
+        },
+        "workspace": {
+          "$ref": "#/$defs/helpLines"
+        },
+        "workspace state": {
+          "$ref": "#/$defs/helpLines"
+        },
+        "watch": {
           "$ref": "#/$defs/helpLines"
         },
         "panes create": {

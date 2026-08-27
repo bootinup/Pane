@@ -63,6 +63,19 @@ describe('CLAUDE_MANIFEST', () => {
     expect(r.visibleWorking).toBe(true);
   });
 
+  it('detects high-effort thinking redraws as working', () => {
+    const s = [
+      '· Newspapering… (3m 52s · ↓ 5.9k tokens · thinking with high effort)',
+      'esc to interrupt',
+      '────────────────────',
+      ' ❯ ',
+    ].join('\n');
+    const r = detectAgentState(CLAUDE_MANIFEST, screen(s));
+    expect(r.state).toBe('working');
+    expect(r.visibleWorking).toBe(true);
+    expect(r.matchedRuleId).toBe('high_effort_thinking_working');
+  });
+
   it('detects idle from the ✳ OSC title', () => {
     const r = detectAgentState(CLAUDE_MANIFEST, screen('', '✳ Ready'));
     expect(r.state).toBe('idle');

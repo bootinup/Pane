@@ -38,6 +38,14 @@ export const CLAUDE_MANIFEST: AgentManifest = {
       lineRegex: [/^\s*\/btw(?:\s|$)/, /esc to close\s*$/i],
     },
     {
+      id: 'high_effort_thinking_working',
+      state: 'working',
+      priority: 976,
+      region: 'bottom_non_empty_lines(5)',
+      visibleWorking: true,
+      lineRegex: [/^\s*·\s+.+…\s+\([^)]*\bthinking\b[^)]*\)\s*$/iu, /esc to interrupt/i],
+    },
+    {
       id: 'transcript_viewer',
       state: 'unknown',
       priority: 1000,

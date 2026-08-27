@@ -309,6 +309,11 @@ These flags are consumed by local daemon-control commands:
 --input-file <path|->
 --source <user|agent>
 --strategy <auto|codex-ctrl-enter|enter>
+--as <consumer-name>
+--since <generation>
+--from <now|earliest>
+--kinds <kind,...>
+--name-contains <text>
 --json
 --wait-ready
 --no-focus
@@ -316,6 +321,9 @@ These flags are consumed by local daemon-control commands:
 --pinned
 --no-pinned
 --force
+--follow
+--ack-now
+--include-held-input
 ```
 
 `runpane doctor --json`, `runpane repos list`, `runpane panes ...`, and `runpane panels ...` commands use or describe the local framed daemon socket/pipe for a running Pane app. `--pane-dir` points the wrapper at a non-default Pane data directory, such as `PANE_DIR=~/.pane_test` in development. `runpane agent-context` is local/offline and can be used before Pane is running. In a Pane repository checkout, if `runpane` is not on PATH, use the built local wrapper with Node 22, for example `PATH=/opt/homebrew/opt/node@22/bin:$PATH node packages/runpane/dist/cli.js doctor --json`. From WSL, if the user runs Windows Pane, call the Windows wrapper through `powershell.exe -NoProfile -Command 'Set-Location $env:TEMP; runpane ...'` so the command can reach the Windows named-pipe daemon and avoid UNC cwd issues.

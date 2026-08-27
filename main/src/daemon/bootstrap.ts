@@ -1,3 +1,4 @@
+import path from 'path';
 import { powerMonitor, type App, type BrowserWindow } from 'electron';
 import { startupRetentionResult } from '../services/database';
 import { ConfigManager } from '../services/configManager';
@@ -36,6 +37,13 @@ import { getAppDirectory } from '../utils/appDirectory';
 import { resourceMonitorService } from '../services/resourceMonitorService';
 import type { PaneCommandRegistry } from './commandRegistry';
 import { syncRemoteTransportForMode } from './remoteTransportStartup';
+import { panelManager } from '../services/panelManager';
+import { terminalPanelManager } from '../services/terminalPanelManager';
+import { WorkspaceJournal } from '../services/workspaceJournal';
+import { WorkspaceStateReader } from '../services/workspaceStateReader';
+import { WorkspaceCursorStore } from '../services/workspaceCursorStore';
+import { extractWorkspaceHeldInput } from '../services/workspaceHeldInput';
+import { boundary, decodeBoundary } from '../../../shared/validation/boundaryDecoder';
 
 interface PaneDaemonHostOptions {
   app: App;
@@ -189,6 +197,56 @@ export async function createPaneDaemonHost(options: PaneDaemonHostOptions): Prom
     worktreeNameGenerator,
   });
 
+  const workspaceJournal = new WorkspaceJournal({
+    resolvePane: (paneId) => {
+      const session = sessionManager.getSession(paneId);
+      if (!session) return undefined;
+      const project = sessionManager.getProjectForSession(paneId);
+      return {
+        paneId,
+        paneName: session.name,
+        repoId: project?.id,
+        repoName: project?.name,
+        worktreePath: session.worktreePath,
+      };
+    },
+    resolvePanel: (panelId) => {
+      const panel = panelManager.getPanel(panelId);
+      if (!panel) return undefined;
+      const snapshot = terminalPanelManager.getTerminalSnapshot(panelId);
+      const customState = decodeBoundary(panel.state.customState ?? {}, boundary.object({
+        agentType: boundary.optional(boundary.string),
+        isCliPanel: boundary.optional(boundary.boolean),
+      }));
+      return {
+        panelId,
+        paneId: panel.sessionId,
+        isCliPanel: snapshot?.isCliPanel ?? customState.isCliPanel ?? false,
+        agentType: snapshot?.agentType ?? customState.agentType,
+        lastActivityAt: snapshot?.lastActivityTime,
+        heldInput: snapshot?.screenText ? extractWorkspaceHeldInput(snapshot.screenText) : undefined,
+      };
+    },
+  });
+  for (const session of sessionManager.getAllSessions()) {
+    const project = sessionManager.getProjectForSession(session.id);
+    workspaceJournal.rememberPane({
+      paneId: session.id,
+      paneName: session.name,
+      repoId: project?.id,
+      repoName: project?.name,
+      worktreePath: session.worktreePath,
+    });
+  }
+  const workspaceStateReader = new WorkspaceStateReader(
+    sessionManager,
+    () => workspaceJournal.epoch,
+    () => workspaceJournal.generation,
+  );
+  const workspaceCursorStore = new WorkspaceCursorStore(
+    path.join(getAppDirectory(), 'workspace-cursors.json'),
+  );
+
   const daemonServices: DaemonHostServices = {
     configManager,
     databaseService,
@@ -210,6 +268,9 @@ export async function createPaneDaemonHost(options: PaneDaemonHostOptions): Prom
     archiveProgressManager,
     analyticsManager,
     spotlightManager,
+    workspaceJournal,
+    workspaceStateReader,
+    workspaceCursorStore,
   };
 
   const services: AppServices = {
@@ -242,7 +303,7 @@ export async function createPaneDaemonHost(options: PaneDaemonHostOptions): Prom
     });
   }
 
-  const daemonSinks: PaneEventSink[] = [];
+  const daemonSinks: PaneEventSink[] = [workspaceJournal];
   if (paneDaemonServer) {
     daemonSinks.push(paneDaemonServer.getEventSink());
   }
@@ -304,6 +365,7 @@ export async function createPaneDaemonHost(options: PaneDaemonHostOptions): Prom
       configManager.stopWatching();
       await cliManagerFactory.shutdown();
       await taskQueue.close();
+      workspaceJournal.dispose();
       await permissionIpcServer?.stop();
       await remoteTransportController.stopWatchingAndShutdown();
       if (paneDaemonServer) {

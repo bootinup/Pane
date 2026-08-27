@@ -36,6 +36,8 @@ from .local_control import (
     run_panes_rename,
     run_repos_add,
     run_repos_list,
+    run_watch,
+    run_workspace_state,
 )
 from .platforms import detect_platform
 from .releases import resolve_release
@@ -60,7 +62,7 @@ TARGETS = set(RUNPANE_CONTRACT["enums"]["installTargets"])
 FORMATS = set(RUNPANE_CONTRACT["enums"]["artifactFormats"])
 CHANNELS = set(RUNPANE_CONTRACT["enums"]["channels"])
 AGENTS = set(RUNPANE_CONTRACT["enums"]["agents"])
-COMMAND_GROUP_HELP_TOPICS = {"panes", "panels"}
+COMMAND_GROUP_HELP_TOPICS = {"panes", "panels", "workspace"}
 
 REMOTE_VALUE_FLAGS = {flag["name"] for flag in RUNPANE_CONTRACT["flags"]["remoteValue"]}
 REMOTE_BOOLEAN_FLAGS = {flag["name"] for flag in RUNPANE_CONTRACT["flags"]["remoteBoolean"]}
@@ -122,6 +124,15 @@ class ParsedArgs:
     no_pinned: bool = False
     composer_strategy: Optional[str] = None
     force: bool = False
+    watch_as: Optional[str] = None
+    watch_since: Optional[int] = None
+    watch_from: Optional[str] = None
+    watch_kinds: List[str] = field(default_factory=list)
+    watch_pane_ids: List[str] = field(default_factory=list)
+    name_contains: Optional[str] = None
+    follow: bool = False
+    ack_now: bool = False
+    include_held_input: bool = False
     help_topic: Optional[str] = None
     remote_setup_args: List[str] = field(default_factory=list)
 
@@ -177,6 +188,10 @@ def dispatch_parsed_command(parsed: ParsedArgs, telemetry_context: WrapperTeleme
         return run_repos_add(parsed)
     if parsed.command == "panes list":
         return run_panes_list(parsed)
+    if parsed.command == "workspace state":
+        return run_workspace_state(parsed)
+    if parsed.command == "watch":
+        return run_watch(parsed)
     if parsed.command == "panes create":
         return run_panes_create(parsed)
     if parsed.command == "panes archive":
@@ -488,6 +503,15 @@ def parse_local_boolean_flag(parsed: ParsedArgs, flag: str) -> None:
     if flag == "--force":
         parsed.force = True
         return
+    if flag == "--follow":
+        parsed.follow = True
+        return
+    if flag == "--ack-now":
+        parsed.ack_now = True
+        return
+    if flag == "--include-held-input":
+        parsed.include_held_input = True
+        return
     raise ValueError(f"Unknown option for {parsed.command}: {flag}")
 
 
@@ -499,7 +523,10 @@ def parse_local_value_flag(parsed: ParsedArgs, flag: str, value: str) -> None:
         parsed.repo = value
         return
     if flag == "--pane":
-        parsed.pane_id = value
+        if parsed.command == "watch":
+            parsed.watch_pane_ids.append(value)
+        else:
+            parsed.pane_id = value
         return
     if flag == "--panel":
         parsed.panel_id = value
@@ -547,8 +574,8 @@ def parse_local_value_flag(parsed: ParsedArgs, flag: str, value: str) -> None:
             timeout_ms = float(value)
         except ValueError as error:
             raise ValueError("--timeout-ms must be a positive number.") from error
-        if timeout_ms <= 0:
-            raise ValueError("--timeout-ms must be a positive number.")
+        if timeout_ms < 0 or (timeout_ms == 0 and parsed.command != "watch"):
+            raise ValueError("--timeout-ms must be a positive number (watch also accepts 0).")
         parsed.timeout_ms = timeout_ms
         return
     if flag == "--ready-timeout-ms":
@@ -605,6 +632,29 @@ def parse_local_value_flag(parsed: ParsedArgs, flag: str, value: str) -> None:
             raise ValueError("--strategy must be one of: auto, codex-ctrl-enter, enter.")
         parsed.composer_strategy = value
         return
+    if flag == "--as":
+        parsed.watch_as = value
+        return
+    if flag == "--since":
+        try:
+            since = int(value)
+        except ValueError as error:
+            raise ValueError("--since must be a non-negative integer.") from error
+        if since < 0:
+            raise ValueError("--since must be a non-negative integer.")
+        parsed.watch_since = since
+        return
+    if flag == "--from":
+        if value not in {"now", "earliest"}:
+            raise ValueError("--from must be now or earliest.")
+        parsed.watch_from = value
+        return
+    if flag == "--kinds":
+        parsed.watch_kinds = [kind.strip() for kind in value.split(",") if kind.strip()]
+        return
+    if flag == "--name-contains":
+        parsed.name_contains = value
+        return
     raise ValueError(f"Unknown option for {parsed.command}: {flag}")
 
 
@@ -614,6 +664,8 @@ def is_runpane_local_command(command: str) -> bool:
         "daemon repair",
         "repos list",
         "repos add",
+        "workspace state",
+        "watch",
         "panes list",
         "panes create",
         "panes archive",

@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from typing import Any, Dict, Optional
 
-from .daemon_client import invoke_daemon
+from .daemon_client import PaneDaemonClientError, invoke_daemon
 from .generated_contract import RUNPANE_CONTRACT
 
 
@@ -51,6 +52,72 @@ def run_panes_list(parsed: Any) -> int:
         return 0
 
     print_pane_list_result(result)
+    return 0
+
+
+def run_workspace_state(parsed: Any) -> int:
+    result = invoke_daemon(
+        "runpane:workspace:state",
+        [{"repo": parsed.repo}],
+        pane_dir=parsed.pane_dir,
+    )
+
+    if parsed.json:
+        print_json(result)
+        return 0
+
+    for entry in result.get("entries", []):
+        panel = f"\t{entry.get('panelId')}" if entry.get("panelId") else ""
+        print(f"{workspace_label(entry.get('kind'))}\t{entry.get('paneName')}{panel}")
+    return 0
+
+
+def run_watch(parsed: Any) -> int:
+    if parsed.watch_as and parsed.watch_since is not None:
+        raise ValueError("runpane watch accepts either --as or --since, not both.")
+
+    request: Dict[str, Any] = {
+        **optional_value("as", parsed.watch_as),
+        **optional_value("since", parsed.watch_since),
+        **optional_value("from", parsed.watch_from),
+        **optional_value("timeoutMs", parsed.timeout_ms),
+        **optional_value("limit", parsed.limit),
+        **optional_value("kinds", parsed.watch_kinds or None),
+        **optional_value("paneIds", parsed.watch_pane_ids or None),
+        **optional_value("repo", parsed.repo),
+        **optional_value("nameContains", parsed.name_contains),
+        **optional_value("ackNow", True if parsed.ack_now else None),
+        **optional_value("includeHeldInput", True if parsed.include_held_input else None),
+    }
+
+    try:
+        while True:
+            timeout_ms = parsed.timeout_ms if parsed.timeout_ms is not None else 60_000
+            try:
+                result = invoke_daemon(
+                    "runpane:workspace:wait",
+                    [request],
+                    pane_dir=parsed.pane_dir,
+                    timeout_ms=timeout_ms + 5_000,
+                    event_include=[],
+                )
+            except PaneDaemonClientError as error:
+                if not parsed.follow or error.code not in {
+                    "ERR_RUNPANE_DAEMON_CLOSED",
+                    "ERR_RUNPANE_DAEMON_CONNECT_FAILED",
+                    "ERR_RUNPANE_DAEMON_TIMEOUT",
+                }:
+                    raise
+                time.sleep(1)
+                continue
+            print_workspace_wait_result(result, parsed.json)
+            if not parsed.watch_as:
+                request["since"] = result.get("generation")
+            if not parsed.follow:
+                break
+    except KeyboardInterrupt:
+        return 0
+
     return 0
 
 
@@ -606,6 +673,39 @@ def strip_utf8_bom(value: str) -> str:
 
 def print_json(value: Any) -> None:
     print(json.dumps(value, indent=2))
+
+
+def print_workspace_wait_result(result: Dict[str, Any], json_output: bool) -> None:
+    reset = result.get("reset")
+    if reset:
+        if json_output:
+            print(json.dumps({
+                "kind": "_reset",
+                "reason": reset.get("reason"),
+                "epoch": result.get("epoch"),
+            }, separators=(",", ":")), flush=True)
+        else:
+            print(f"RESET\t{reset.get('reason')}", flush=True)
+
+    for entry in result.get("entries", []):
+        if json_output:
+            print(json.dumps(entry, separators=(",", ":")), flush=True)
+            continue
+        print(f"{workspace_label(entry.get('kind'))}\t{entry.get('paneName')}", flush=True)
+        if entry.get("heldInput"):
+            print(f"STUCK\t{entry.get('paneName')} :: {entry['heldInput'][:70]}", flush=True)
+
+
+def workspace_label(kind: Any) -> str:
+    return {
+        "agent.ready": "READY",
+        "agent.busy": "BUSY",
+        "agent.blocked": "BLOCKED",
+        "agent.unknown": "UNKNOWN",
+        "pane.created": "NEW",
+        "pane.gone": "GONE",
+        "panel.exited": "EXIT",
+    }.get(kind, str(kind).upper())
 
 
 def print_repo_add_result(result: Dict[str, Any]) -> None:

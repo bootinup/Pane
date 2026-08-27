@@ -14,6 +14,8 @@ import { RUNPANE_CONTRACT } from '../../../shared/types/generatedRunpaneContract
 import { panelManager } from '../services/panelManager';
 import { terminalPanelManager } from '../services/terminalPanelManager';
 import { ArchiveProgressManager } from '../services/archiveProgressManager';
+import { WorkspaceJournal } from '../services/workspaceJournal';
+import { WorkspaceCursorStore } from '../services/workspaceCursorStore';
 import { CommandRunner } from '../utils/commandRunner';
 import { registerRunpaneHandlers } from './runpane';
 
@@ -30,6 +32,7 @@ vi.spyOn(terminalPanelManager, 'writeToTerminal');
 vi.spyOn(terminalPanelManager, 'getLastOutputAt');
 vi.spyOn(terminalPanelManager, 'getOutputGeneration');
 vi.spyOn(terminalPanelManager, 'deliverPendingInitialInput');
+vi.spyOn(terminalPanelManager, 'getAgentStatus');
 
 const project: Project = {
   id: 1,
@@ -119,6 +122,7 @@ function createServices(overrides: Partial<AppServices> = {}): AppServices {
       })),
     },
     sessionManager: {
+      getAllSessions: vi.fn(() => [session]),
       getSessionsForProject: vi.fn(() => [session]),
       getSession: vi.fn(() => session),
       getProjectForSession: vi.fn(() => project),
@@ -234,7 +238,9 @@ describe('runpane IPC handlers', () => {
     vi.mocked(terminalPanelManager.getLastOutputAt).mockReset();
     vi.mocked(terminalPanelManager.getOutputGeneration).mockReset();
     vi.mocked(terminalPanelManager.deliverPendingInitialInput).mockReset();
+    vi.mocked(terminalPanelManager.getAgentStatus).mockReset();
     vi.mocked(terminalPanelManager.getOutputGeneration).mockReturnValue(0);
+    vi.mocked(terminalPanelManager.getAgentStatus).mockReturnValue('idle');
 
     vi.mocked(panelManager.getPanel).mockImplementation((panelId: string) =>
       panelId === terminalPanel.id ? terminalPanel : undefined
@@ -307,6 +313,108 @@ describe('runpane IPC handlers', () => {
         sessionCount: 1,
       }],
     });
+  });
+
+  it('returns a workspace baseline for panes and CLI panels', async () => {
+    const registry = createRegistry();
+
+    const result = await registry.invoke('runpane:workspace:state');
+
+    expect(result).toMatchObject({
+      ok: true,
+      generation: 0,
+      entries: [
+        { kind: 'pane.created', paneId: session.id, baseline: true },
+        { kind: 'agent.ready', paneId: session.id, panelId: terminalPanel.id, baseline: true },
+      ],
+    });
+  });
+
+  it('waits for filtered workspace journal entries after an explicit generation', async () => {
+    const workspaceJournal = new WorkspaceJournal();
+    const registry = createRegistry(createServices({ workspaceJournal }));
+    workspaceJournal.append({
+      kind: 'agent.ready',
+      paneId: session.id,
+      paneName: session.name,
+      panelId: terminalPanel.id,
+      source: 'agent',
+      from: 'working',
+      to: 'idle',
+    });
+
+    const result = await registry.invoke('runpane:workspace:wait', [{
+      since: 0,
+      timeoutMs: 0,
+      kinds: ['agent.ready'],
+    }]);
+
+    expect(result).toMatchObject({
+      ok: true,
+      generation: 1,
+      timedOut: false,
+      entries: [{ kind: 'agent.ready', gen: 1, paneId: session.id }],
+    });
+  });
+
+  it('announces an evicted named workspace cursor as unknown', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-runpane-cursor-test-'));
+    tempDirs.push(directory);
+    let now = Date.parse('2026-01-01T00:00:00.000Z');
+    const workspaceJournal = new WorkspaceJournal();
+    const workspaceCursorStore = new WorkspaceCursorStore(
+      path.join(directory, 'workspace-cursors.json'),
+      () => now,
+    );
+    workspaceCursorStore.create('monitor', 0, workspaceJournal.epoch);
+    now += 31 * 24 * 60 * 60 * 1000;
+    const registry = createRegistry(createServices({ workspaceJournal, workspaceCursorStore }));
+
+    const result = await registry.invoke('runpane:workspace:wait', [{ as: 'monitor', timeoutMs: 0 }]);
+
+    expect(result).toMatchObject({
+      ok: true,
+      reset: { reason: 'unknown-consumer' },
+    });
+    expect(result.entries).toContainEqual(
+      expect.objectContaining({ kind: 'pane.created', baseline: true }),
+    );
+  });
+
+  it('advances a truncated named cursor when its filter excludes retained entries', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-runpane-cursor-test-'));
+    tempDirs.push(directory);
+    const workspaceJournal = new WorkspaceJournal({ capacity: 2 });
+    const workspaceCursorStore = new WorkspaceCursorStore(
+      path.join(directory, 'workspace-cursors.json'),
+    );
+    workspaceCursorStore.create('monitor', 0, workspaceJournal.epoch);
+    const registry = createRegistry(createServices({ workspaceJournal, workspaceCursorStore }));
+    for (const paneId of ['one', 'two', 'three']) {
+      workspaceJournal.append({ kind: 'pane.created', paneId, paneName: paneId, source: 'session' });
+    }
+
+    const truncated = await registry.invoke('runpane:workspace:wait', [{
+      as: 'monitor',
+      kinds: ['panel.exited'],
+      timeoutMs: 0,
+    }]);
+    const resumed = await registry.invoke('runpane:workspace:wait', [{
+      as: 'monitor',
+      kinds: ['panel.exited'],
+      timeoutMs: 0,
+    }]);
+
+    expect(truncated).toMatchObject({
+      generation: 3,
+      entries: [],
+      timedOut: true,
+      dropped: 1,
+      reset: { reason: 'cursor-truncated' },
+    });
+    expect(resumed).toMatchObject({ generation: 3, entries: [], timedOut: true });
+    expect(resumed.dropped).toBeUndefined();
+    expect(resumed.reset).toBeUndefined();
   });
 
   it('dry-runs adding an existing git repository without saving it', async () => {
@@ -1624,6 +1732,7 @@ describe('runpane IPC handlers', () => {
       paneId: session.id,
       pinned: true,
       favoritePinnedAt: pinTimestamp,
+      generation: 0,
     });
     expect(secondPin).toEqual(firstPin);
     expect(databaseRow.favorite_pinned_at).toBe(pinTimestamp);
@@ -1632,7 +1741,7 @@ describe('runpane IPC handlers', () => {
     const firstUnpin = await registry.invoke('runpane:panes:pin', [{ paneId: session.id, pinned: false }]);
     const secondUnpin = await registry.invoke('runpane:panes:pin', [{ paneId: session.id, pinned: false }]);
 
-    expect(firstUnpin).toEqual({ ok: true, paneId: session.id, pinned: false, favoritePinnedAt: undefined });
+    expect(firstUnpin).toEqual({ ok: true, paneId: session.id, pinned: false, favoritePinnedAt: undefined, generation: 0 });
     expect(secondUnpin).toEqual(firstUnpin);
     expect(databaseRow).toMatchObject({ is_favorite: 0, favorite_pinned_at: null });
     expect(setSessionFavorite).toHaveBeenCalledTimes(4);
@@ -2063,7 +2172,8 @@ describe('runpane IPC handlers', () => {
       .mockReturnValueOnce(0)
       .mockReturnValueOnce(1)
       .mockReturnValueOnce(1)
-      .mockReturnValue(1);
+      .mockReturnValueOnce(1)
+      .mockReturnValue(2);
     vi.mocked(terminalPanelManager.getLastOutputAt).mockReturnValue('2026-01-01T00:01:59.300Z');
     vi.mocked(terminalPanelManager.getTerminalSnapshot)
       .mockReturnValueOnce(terminalSnapshot('› /do TM-x', 'idle'))

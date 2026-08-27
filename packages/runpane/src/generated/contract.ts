@@ -189,6 +189,27 @@ export const RUNPANE_CONTRACT = {
       ]
     },
     {
+      "name": "workspace state",
+      "summary": "Read one workspace snapshot of every Pane and CLI panel.",
+      "usage": [
+        "runpane workspace state [--repo <selector>] [--json]"
+      ],
+      "jsonSchemas": [
+        "workspaceStateResult"
+      ]
+    },
+    {
+      "name": "watch",
+      "summary": "Wait for workspace agent and Pane transitions using a daemon-held cursor.",
+      "usage": [
+        "runpane watch [--as <name>|--since <generation>] [--follow] [--kinds <kind,...>] [--pane <id>] [--repo <selector>] [--name-contains <text>] [--timeout-ms <ms>] [--from <now|earliest>] [--json]"
+      ],
+      "jsonSchemas": [
+        "workspaceWaitRequest",
+        "workspaceWaitResult"
+      ]
+    },
+    {
       "name": "panes create",
       "summary": "Create user-visible Panes (Pane sessions) backed by Pane-managed worktrees for feature/PR work and open terminal-backed tool tabs.",
       "usage": [
@@ -556,6 +577,31 @@ export const RUNPANE_CONTRACT = {
         "name": "--strategy",
         "value": "<auto|codex-ctrl-enter|enter>",
         "description": "Composer submit key sequence strategy for panels submit-composer."
+      },
+      {
+        "name": "--as",
+        "value": "<consumer-name>",
+        "description": "Use a persisted daemon-held workspace cursor."
+      },
+      {
+        "name": "--since",
+        "value": "<generation>",
+        "description": "Read workspace events after this generation."
+      },
+      {
+        "name": "--from",
+        "value": "<now|earliest>",
+        "description": "Choose where a new named cursor starts."
+      },
+      {
+        "name": "--kinds",
+        "value": "<kind,...>",
+        "description": "Limit workspace events to comma-separated kinds."
+      },
+      {
+        "name": "--name-contains",
+        "value": "<text>",
+        "description": "Limit workspace events to Pane names containing text."
       }
     ],
     "localBoolean": [
@@ -586,6 +632,18 @@ export const RUNPANE_CONTRACT = {
       {
         "name": "--force",
         "description": "Archive even if the pane's branch has uncommitted, untracked, or unpushed changes."
+      },
+      {
+        "name": "--follow",
+        "description": "Continue waiting for workspace events until interrupted."
+      },
+      {
+        "name": "--ack-now",
+        "description": "Advance a named cursor immediately for at-most-once delivery."
+      },
+      {
+        "name": "--include-held-input",
+        "description": "Include up to 120 characters of unsubmitted composer text in ready events."
       }
     ]
   },
@@ -605,6 +663,8 @@ export const RUNPANE_CONTRACT = {
         "  runpane repos list [--json]",
         "  runpane repos add --path <path> [--name <name>]",
         "  runpane panes list [--repo <selector>] [--json]",
+        "  runpane workspace state [--repo <selector>] [--json]",
+        "  runpane watch [--as <name>|--since <generation>] [--follow] [--json]",
         "  runpane panes create --repo <selector> --name <name> --agent <codex|claude|cursor> [--source user|agent] [--focus|--no-focus] [--wait-ready]",
         "  runpane panes archive --pane <pane-id> [--source user|agent] [--force] [--dry-run] --yes",
         "  runpane panels create --pane <pane-id> --agent <codex|claude|cursor> [--source user|agent] [--focus|--no-focus] --yes",
@@ -780,6 +840,40 @@ export const RUNPANE_CONTRACT = {
         "  --repo <selector>              active, id, exact path, or saved repository name",
         "  --pane-dir <path>              Connect to a specific Pane data directory",
         "  --json                         Print machine-readable output"
+      ],
+      "workspace": [
+        "Workspace observation commands.",
+        "",
+        "Usage:",
+        "  runpane workspace state [--repo <selector>] [--json]",
+        "  runpane watch [--as <name>|--since <generation>] [--follow] [options]"
+      ],
+      "workspace state": [
+        "Usage:",
+        "  runpane workspace state [--repo <selector>] [--json]",
+        "",
+        "Returns one workspace snapshot of every Pane and CLI panel."
+      ],
+      "watch": [
+        "Usage:",
+        "  runpane watch [--as <name>|--since <generation>] [--follow] [options]",
+        "",
+        "Waits for agent state, Pane lifecycle, and panel exit transitions without polling.",
+        "",
+        "Options:",
+        "  --as <name>                    Use a persisted daemon-held cursor",
+        "  --since <generation>           Use an explicit cursor instead",
+        "  --from <now|earliest>          Starting point for a new named cursor",
+        "  --follow                       Continue waiting until interrupted",
+        "  --kinds <kind,...>             Limit event kinds",
+        "  --pane <id>                    Limit to a Pane; repeatable",
+        "  --repo <selector>              Limit to a saved repository",
+        "  --name-contains <text>         Limit by Pane name substring",
+        "  --timeout-ms <ms>              Wait timeout; 0 polls once",
+        "  --limit <count>                Maximum entries per response",
+        "  --ack-now                      Use at-most-once named-cursor delivery",
+        "  --include-held-input           Include unsubmitted composer text",
+        "  --json                         Emit one NDJSON line per entry"
       ],
       "panes create": [
         "Usage:",
@@ -1044,6 +1138,8 @@ export const RUNPANE_CONTRACT = {
         "  runpane repos list [--json]",
         "  runpane repos add --path <path> [--name <name>]",
         "  runpane panes list [--repo <selector>] [--json]",
+        "  runpane workspace state [--repo <selector>] [--json]",
+        "  runpane watch [--as <name>|--since <generation>] [--follow] [--json]",
         "  runpane panes create --repo <selector> --name <name> --agent <codex|claude|cursor> [--source user|agent] [--focus|--no-focus] [--wait-ready]",
         "  runpane panes archive --pane <pane-id> [--source user|agent] [--force] [--dry-run] --yes",
         "  python -m runpane panels create --pane <pane-id> --agent <codex|claude|cursor> [--source user|agent] [--focus|--no-focus] --yes",
@@ -1207,6 +1303,40 @@ export const RUNPANE_CONTRACT = {
         "Options:",
         "  --repo <selector>",
         "  --pane-dir <path>",
+        "  --json"
+      ],
+      "workspace": [
+        "Workspace observation commands.",
+        "",
+        "Usage:",
+        "  runpane workspace state [--repo <selector>] [--json]",
+        "  runpane watch [--as <name>|--since <generation>] [--follow] [options]"
+      ],
+      "workspace state": [
+        "Usage:",
+        "  runpane workspace state [--repo <selector>] [--json]",
+        "",
+        "Returns one workspace snapshot of every Pane and CLI panel."
+      ],
+      "watch": [
+        "Usage:",
+        "  runpane watch [--as <name>|--since <generation>] [--follow] [options]",
+        "",
+        "Waits for workspace transitions without polling.",
+        "",
+        "Options:",
+        "  --as <name>",
+        "  --since <generation>",
+        "  --from <now|earliest>",
+        "  --follow",
+        "  --kinds <kind,...>",
+        "  --pane <id>                    Repeatable",
+        "  --repo <selector>",
+        "  --name-contains <text>",
+        "  --timeout-ms <ms>              0 polls once",
+        "  --limit <count>",
+        "  --ack-now",
+        "  --include-held-input",
         "  --json"
       ],
       "panes create": [
@@ -2627,6 +2757,9 @@ export const RUNPANE_CONTRACT = {
         "ok": {
           "type": "boolean"
         },
+        "generation": {
+          "type": "number"
+        },
         "repo": {
           "$ref": "#/jsonSchemas/repoListResult/properties/repos/items"
         },
@@ -3020,6 +3153,258 @@ export const RUNPANE_CONTRACT = {
       },
       "additionalProperties": false
     },
+    "workspaceEntry": {
+      "type": "object",
+      "required": [
+        "gen",
+        "at",
+        "kind",
+        "paneId",
+        "paneName",
+        "source"
+      ],
+      "properties": {
+        "gen": {
+          "type": "number"
+        },
+        "at": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "agent.ready",
+            "agent.busy",
+            "agent.blocked",
+            "agent.unknown",
+            "pane.created",
+            "pane.gone",
+            "panel.exited"
+          ]
+        },
+        "paneId": {
+          "type": "string"
+        },
+        "paneName": {
+          "type": "string"
+        },
+        "repoId": {
+          "type": "number"
+        },
+        "repoName": {
+          "type": "string"
+        },
+        "worktreePath": {
+          "type": "string"
+        },
+        "panelId": {
+          "type": "string"
+        },
+        "agentType": {
+          "type": "string"
+        },
+        "from": {
+          "enum": [
+            "blocked",
+            "working",
+            "idle",
+            "unknown"
+          ]
+        },
+        "to": {
+          "enum": [
+            "blocked",
+            "working",
+            "idle",
+            "unknown"
+          ]
+        },
+        "source": {
+          "enum": [
+            "agent",
+            "exit",
+            "session"
+          ]
+        },
+        "reason": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "settledMs": {
+          "type": "number"
+        },
+        "heldInput": {
+          "type": "string"
+        },
+        "exitCode": {
+          "type": "number"
+        },
+        "baseline": {
+          "const": true
+        },
+        "changedWhileAway": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "workspaceWaitRequest": {
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "number"
+        },
+        "as": {
+          "type": "string"
+        },
+        "from": {
+          "enum": [
+            "now",
+            "earliest"
+          ]
+        },
+        "timeoutMs": {
+          "type": "number"
+        },
+        "limit": {
+          "type": "number"
+        },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/jsonSchemas/workspaceEntry/properties/kind"
+          }
+        },
+        "paneIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repo": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "number"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "active": {
+                  "const": true
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "nameContains": {
+          "type": "string"
+        },
+        "ackNow": {
+          "type": "boolean"
+        },
+        "includeHeldInput": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "workspaceStateResult": {
+      "type": "object",
+      "required": [
+        "ok",
+        "epoch",
+        "generation",
+        "entries"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "epoch": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "number"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/jsonSchemas/workspaceEntry"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "workspaceWaitResult": {
+      "type": "object",
+      "required": [
+        "ok",
+        "epoch",
+        "generation",
+        "entries",
+        "timedOut",
+        "nextCommand"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "epoch": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "number"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/jsonSchemas/workspaceEntry"
+          }
+        },
+        "timedOut": {
+          "type": "boolean"
+        },
+        "dropped": {
+          "type": "number"
+        },
+        "reset": {
+          "type": "object",
+          "required": [
+            "reason"
+          ],
+          "properties": {
+            "reason": {
+              "enum": [
+                "first-use",
+                "epoch-changed",
+                "cursor-truncated",
+                "unknown-consumer"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "nextCommand": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
     "paneArchiveRequest": {
       "type": "object",
       "required": [
@@ -3074,6 +3459,9 @@ export const RUNPANE_CONTRACT = {
         "ok": {
           "const": true
         },
+        "generation": {
+          "type": "number"
+        },
         "paneId": {
           "type": "string"
         },
@@ -3119,6 +3507,9 @@ export const RUNPANE_CONTRACT = {
         "ok": {
           "const": true
         },
+        "generation": {
+          "type": "number"
+        },
         "dryRun": {
           "const": true
         },
@@ -3143,6 +3534,9 @@ export const RUNPANE_CONTRACT = {
           "properties": {
             "ok": {
               "type": "boolean"
+            },
+            "generation": {
+              "type": "number"
             },
             "paneId": {
               "type": "string"
@@ -3230,6 +3624,9 @@ export const RUNPANE_CONTRACT = {
             "ok": {
               "const": true
             },
+            "generation": {
+              "type": "number"
+            },
             "paneId": {
               "type": "string"
             },
@@ -3262,6 +3659,9 @@ export const RUNPANE_CONTRACT = {
           "properties": {
             "ok": {
               "const": false
+            },
+            "generation": {
+              "type": "number"
             },
             "paneId": {
               "type": "string"
@@ -3429,6 +3829,9 @@ export const RUNPANE_CONTRACT = {
       "properties": {
         "ok": {
           "const": true
+        },
+        "generation": {
+          "type": "number"
         },
         "panelId": {
           "type": "string"
@@ -3788,6 +4191,9 @@ export const RUNPANE_CONTRACT = {
         "ok": {
           "type": "boolean"
         },
+        "generation": {
+          "type": "number"
+        },
         "panelId": {
           "type": "string"
         },
@@ -4084,6 +4490,9 @@ export const RUNPANE_CONTRACT = {
         "ok": {
           "type": "boolean"
         },
+        "generation": {
+          "type": "number"
+        },
         "paneId": {
           "type": "string"
         },
@@ -4257,6 +4666,9 @@ export const RUNPANE_CONTRACT = {
       "properties": {
         "ok": {
           "type": "boolean"
+        },
+        "generation": {
+          "type": "number"
         },
         "panelId": {
           "type": "string"
@@ -5738,6 +6150,69 @@ export const RUNPANE_CONTRACT = {
           "Use `panels input` or `panels submit` to write prompt text first; this command only submits the current composer.",
           "Use --strategy auto for agent workflows; explicit strategies are diagnostic escape hatches.",
           "The JSON result includes sequenceName and verifiedSubmitted. If ok is false, follow blocked.suggestedCommand instead of assuming submission happened."
+        ]
+      },
+      "workspace state": {
+        "name": "workspace state",
+        "summary": "Read one snapshot of every Pane and CLI panel.",
+        "details": "Use this instead of spawning one command per pane or panel.",
+        "requiresPaneDaemon": true,
+        "mutates": false,
+        "arguments": [
+          {
+            "name": "--repo",
+            "value": "<selector>",
+            "required": false,
+            "description": "Optionally limit the snapshot to one saved repository."
+          },
+          {
+            "name": "--json",
+            "required": false,
+            "description": "Print machine-readable output."
+          }
+        ],
+        "examples": [
+          "runpane workspace state --json"
+        ],
+        "notes": [
+          "The response carries the daemon epoch and current journal generation."
+        ]
+      },
+      "watch": {
+        "name": "watch",
+        "summary": "Wait for workspace transitions using the daemon journal.",
+        "details": "Named cursors persist in the Pane data directory so separate invocations do not need local state.",
+        "requiresPaneDaemon": true,
+        "mutates": false,
+        "arguments": [
+          {
+            "name": "--as",
+            "value": "<consumer-name>",
+            "required": false,
+            "description": "Use a persisted named cursor."
+          },
+          {
+            "name": "--since",
+            "value": "<generation>",
+            "required": false,
+            "description": "Use an explicit generation cursor."
+          },
+          {
+            "name": "--follow",
+            "required": false,
+            "description": "Continue waiting until interrupted."
+          },
+          {
+            "name": "--json",
+            "required": false,
+            "description": "Emit one NDJSON line per entry."
+          }
+        ],
+        "examples": [
+          "runpane watch --as monitor --follow --json"
+        ],
+        "notes": [
+          "Journal loss is surfaced through reset and dropped metadata."
         ]
       }
     },
