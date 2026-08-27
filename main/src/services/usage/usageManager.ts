@@ -16,10 +16,12 @@ import {
   USAGE_PARSER_VERSION,
   USAGE_RETENTION_DAYS,
   type UsageIndexStatus,
+  type UsageByPaneReport,
   type UsageProvider,
   type UsageRateLimitSample,
   type UsageReport,
   type UsageReportRequest,
+  type UsageTotals,
 } from '../../../../shared/types/usage';
 
 interface TranscriptRoot {
@@ -31,6 +33,14 @@ interface UsageWatcher {
   on(event: 'add' | 'change', listener: (path: string) => void): this;
   on(event: 'error', listener: (error: Error) => void): this;
   close(): Promise<void>;
+}
+
+interface PaneCostsReport {
+  fromMs: number;
+  toMs: number;
+  pricingAsOf: string;
+  byPane: UsageByPaneReport;
+  totals: UsageTotals;
 }
 
 type UsageWatchFactory = (
@@ -174,9 +184,22 @@ class UsageManager {
       series: this.aggregator.getSeries(fromMs, toMs, bucket, providers),
       byModel: this.aggregator.getByModel(fromMs, toMs, providers),
       byProject: this.aggregator.getByProject(fromMs, toMs, providers),
+      byPane: this.aggregator.getByPane(fromMs, toMs, providers),
       rateLimits: this.safeRateLimits(nowMs, providers),
       index: this.getStatus(),
       pricingAsOf: getPricingSource(),
+    };
+  }
+
+  getPaneCosts(request?: UsageReportRequest): PaneCostsReport {
+    const { fromMs, toMs } = resolveReportRange(request, Date.now(), DEFAULT_USAGE_RANGE_DAYS);
+    const providers = request?.providers;
+    return {
+      fromMs,
+      toMs,
+      pricingAsOf: getPricingSource(),
+      byPane: this.aggregator.getByPane(fromMs, toMs, providers),
+      totals: this.aggregator.getTotals(fromMs, toMs, providers),
     };
   }
 

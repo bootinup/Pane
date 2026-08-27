@@ -22,6 +22,15 @@ function createDb() {
       cwd TEXT,
       source_path TEXT NOT NULL
     );
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      worktree_path TEXT NOT NULL,
+      project_id INTEGER,
+      archived INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
   return db;
 }
@@ -38,11 +47,12 @@ function seed(options: {
   output?: number;
   cacheRead?: number;
   cacheWrite?: number;
+  cwd?: string | null;
 }) {
   seq += 1;
   db.prepare(`
-    INSERT INTO usage_events (id, provider, timestamp_ms, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, source_path)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO usage_events (id, provider, timestamp_ms, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cwd, source_path)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     `e${seq}`,
     options.provider ?? 'claude',
@@ -52,7 +62,36 @@ function seed(options: {
     options.output ?? 0,
     options.cacheRead ?? 0,
     options.cacheWrite ?? 0,
+    options.cwd ?? null,
     '/t.jsonl'
+  );
+}
+
+function sqliteDate(timestampMs: number): string {
+  return new Date(timestampMs).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '');
+}
+
+function seedSession(options: {
+  id: string;
+  path: string;
+  createdAtMs: number;
+  updatedAtMs?: number;
+  name?: string;
+  repoId?: number | null;
+  archived?: boolean;
+  isoCreatedAt?: boolean;
+}): void {
+  db.prepare(`
+    INSERT INTO sessions (id, name, worktree_path, project_id, archived, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    options.id,
+    options.name ?? options.id,
+    options.path,
+    options.repoId ?? null,
+    options.archived ? 1 : 0,
+    options.isoCreatedAt ? new Date(options.createdAtMs).toISOString() : sqliteDate(options.createdAtMs),
+    sqliteDate(options.updatedAtMs ?? options.createdAtMs),
   );
 }
 
@@ -145,6 +184,132 @@ describe('UsageAggregator.getByModel', () => {
     expect(byModel).toHaveLength(2);
     expect(byModel[0].model).toBe('claude-opus-5');
     expect(byModel[0].provider).toBe('claude');
+  });
+});
+
+describe('UsageAggregator.getByPane', () => {
+  it('returns pane fields, totals, cache efficiency, and per-model costs', () => {
+    seedSession({ id: 'p1', name: 'Cost work', path: '/work/p1', repoId: 7, createdAtMs: NOW - DAY_MS });
+    seed({ timestampMs: NOW - HOUR_MS, cwd: '/work/p1', model: 'claude-opus-5', input: 100, output: 20, cacheRead: 400 });
+    seed({ timestampMs: NOW - HOUR_MS, cwd: '/work/p1', model: 'claude-sonnet-5', input: 50, output: 10 });
+
+    const report = aggregator.getByPane(NOW - DAY_MS, NOW);
+    expect(report.panes).toHaveLength(1);
+    expect(report.panes[0]).toMatchObject({
+      paneId: 'p1',
+      paneName: 'Cost work',
+      worktreePath: '/work/p1',
+      repoId: 7,
+      archived: false,
+      createdAtMs: NOW - DAY_MS,
+      inputTokens: 150,
+      outputTokens: 30,
+      cacheReadTokens: 400,
+      uncachedInputTokens: 150,
+      messageCount: 2,
+    });
+    expect(report.panes[0].byModel.map(entry => entry.model)).toEqual(['claude-opus-5', 'claude-sonnet-5']);
+    expect(report.panes[0].cacheHitRate).toBeCloseTo(400 / 550, 8);
+    expect(report.panes[0].estimatedCostUsd).toBeGreaterThan(report.panes[0].uncachedCostUsd);
+    expect(report.panes[0].cacheSavingsUsd).toBeGreaterThan(0);
+  });
+
+  it('computes cache hit rate, uncached cost, and cache savings from known pricing', () => {
+    seedSession({ id: 'priced', path: '/priced', createdAtMs: NOW - DAY_MS });
+    seed({
+      timestampMs: NOW - HOUR_MS,
+      cwd: '/priced',
+      model: 'claude-opus-5',
+      input: 1_000_000,
+      cacheRead: 1_000_000,
+    });
+
+    const pane = aggregator.getByPane(NOW - DAY_MS, NOW).panes[0];
+    expect(pane.cacheHitRate).toBe(0.5);
+    expect(pane.estimatedCostUsd).toBeCloseTo(16.5, 8);
+    expect(pane.uncachedCostUsd).toBeCloseTo(15, 8);
+    expect(pane.cacheSavingsUsd).toBeCloseTo(13.5, 8);
+  });
+
+  it('attributes reused paths to the newest pane whose lifetime contains the event', () => {
+    const split = NOW - 2 * HOUR_MS;
+    seedSession({ id: 'old', path: '/shared', createdAtMs: NOW - DAY_MS, updatedAtMs: split, archived: true });
+    seedSession({ id: 'new', path: '/shared', createdAtMs: split + 1_000 });
+    seed({ timestampMs: split - 1_000, cwd: '/shared', input: 10 });
+    seed({ timestampMs: split + 2_000, cwd: '/shared', input: 20 });
+
+    const report = aggregator.getByPane(NOW - DAY_MS, NOW);
+    expect(report.panes.find(pane => pane.paneId === 'old')?.inputTokens).toBe(10);
+    expect(report.panes.find(pane => pane.paneId === 'new')?.inputTokens).toBe(20);
+    expect(report.unattributed.messageCount).toBe(0);
+  });
+
+  it('reconciles panes and unattributed with workspace totals', () => {
+    seedSession({ id: 'p1', path: '/known', createdAtMs: NOW - 2 * HOUR_MS });
+    seed({ timestampMs: NOW - HOUR_MS, cwd: '/known', input: 10, output: 2 });
+    seed({ timestampMs: NOW - HOUR_MS, cwd: '/unknown', input: 20 });
+    seed({ timestampMs: NOW - HOUR_MS, cwd: null, input: 30 });
+    seed({ timestampMs: NOW - 3 * HOUR_MS, cwd: '/known', input: 40 });
+
+    const report = aggregator.getByPane(NOW - DAY_MS, NOW);
+    const totals = aggregator.getTotals(NOW - DAY_MS, NOW);
+    const buckets = [...report.panes, report.unattributed];
+    expect(buckets.reduce((sum, bucket) => sum + bucket.totalTokens, 0)).toBe(totals.totalTokens);
+    expect(buckets.reduce((sum, bucket) => sum + bucket.messageCount, 0)).toBe(totals.messageCount);
+    expect(buckets.reduce((sum, bucket) => sum + bucket.estimatedCostUsd, 0)).toBeCloseTo(totals.estimatedCostUsd, 8);
+    expect(report.unattributed.messageCount).toBe(3);
+  });
+
+  it('applies the provider filter to pane and unattributed buckets', () => {
+    seedSession({ id: 'p1', path: '/known', createdAtMs: NOW - DAY_MS });
+    seed({ timestampMs: NOW - HOUR_MS, cwd: '/known', provider: 'claude', input: 10 });
+    seed({ timestampMs: NOW - HOUR_MS, cwd: '/known', provider: 'codex', model: 'gpt-5-codex', input: 20 });
+    seed({ timestampMs: NOW - HOUR_MS, cwd: '/elsewhere', provider: 'codex', model: 'gpt-5-codex', input: 30 });
+
+    const report = aggregator.getByPane(NOW - DAY_MS, NOW, ['codex']);
+    const totals = aggregator.getTotals(NOW - DAY_MS, NOW, ['codex']);
+    expect(report.panes[0].inputTokens + report.unattributed.inputTokens).toBe(totals.inputTokens);
+    expect(report.panes[0].byModel.every(entry => entry.provider === 'codex')).toBe(true);
+  });
+
+  it('treats a restored pane as having one continuous active lifetime', () => {
+    seedSession({ id: 'restored', path: '/restored', createdAtMs: NOW - DAY_MS, updatedAtMs: NOW - 4 * HOUR_MS });
+    seed({ timestampMs: NOW - 5 * HOUR_MS, cwd: '/restored', input: 10 });
+    seed({ timestampMs: NOW - HOUR_MS, cwd: '/restored', input: 20 });
+
+    expect(aggregator.getByPane(NOW - DAY_MS, NOW).panes[0].inputTokens).toBe(30);
+  });
+
+  it('lets a newer pane win an overlap and leaves post-archive events unattributed', () => {
+    seedSession({ id: 'old', path: '/overlap', createdAtMs: NOW - DAY_MS, updatedAtMs: NOW - 2 * HOUR_MS, archived: true });
+    seedSession({ id: 'new', path: '/overlap', createdAtMs: NOW - 3 * HOUR_MS, updatedAtMs: NOW - HOUR_MS, archived: true });
+    seed({ timestampMs: NOW - 150 * 60 * 1000, cwd: '/overlap', input: 10 });
+    seed({ timestampMs: NOW - 30 * 60 * 1000, cwd: '/overlap', input: 20 });
+
+    const report = aggregator.getByPane(NOW - DAY_MS, NOW);
+    expect(report.panes.find(pane => pane.paneId === 'new')?.inputTokens).toBe(10);
+    expect(report.panes.find(pane => pane.paneId === 'old')?.inputTokens).toBe(0);
+    expect(report.unattributed.inputTokens).toBe(20);
+  });
+
+  it('parses and orders ISO and SQLite timestamps consistently', () => {
+    seedSession({ id: 'sql', path: '/dates', createdAtMs: NOW - 3 * HOUR_MS });
+    seedSession({ id: 'iso', path: '/dates', createdAtMs: NOW - 2 * HOUR_MS, isoCreatedAt: true });
+    seed({ timestampMs: NOW - HOUR_MS, cwd: '/dates', input: 10 });
+
+    const report = aggregator.getByPane(NOW - DAY_MS, NOW);
+    expect(report.panes.find(pane => pane.paneId === 'iso')?.inputTokens).toBe(10);
+    expect(report.panes.find(pane => pane.paneId === 'iso')?.createdAtMs).toBe(NOW - 2 * HOUR_MS);
+  });
+
+  it('zero-fills intersecting idle panes and excludes panes outside the range', () => {
+    seedSession({ id: 'idle', name: 'Idle', path: '/idle', createdAtMs: NOW - HOUR_MS });
+    seedSession({ id: 'future', path: '/future', createdAtMs: NOW + HOUR_MS });
+    seedSession({ id: 'past', path: '/past', createdAtMs: NOW - 3 * DAY_MS, updatedAtMs: NOW - 2 * DAY_MS, archived: true });
+
+    const report = aggregator.getByPane(NOW - DAY_MS, NOW);
+    expect(report.panes).toHaveLength(1);
+    expect(report.panes[0]).toMatchObject({ paneId: 'idle', totalTokens: 0, byModel: [] });
   });
 });
 

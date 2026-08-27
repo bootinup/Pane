@@ -113,6 +113,13 @@
     ],
     [
       "panes",
+      "cost",
+      "--pane",
+      "session-1",
+      "--json"
+    ],
+    [
+      "panes",
       "create",
       "--repo",
       "active",

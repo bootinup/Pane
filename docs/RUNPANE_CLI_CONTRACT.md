@@ -105,6 +105,7 @@ runpane agent-context --command "panes create" --json
 runpane repos list --json
 runpane repos add --path /path/to/repo --name Pane --yes --json
 runpane panes list --repo active --json
+runpane panes cost --pane <pane-id> --json
 runpane panes create --repo active --name issue-252 --agent <agent> --prompt "Kick off the discussion skill for issue 252" --source agent --no-focus --wait-ready --yes --json
 runpane panes create --from-json panes.json --yes --json
 runpane panes archive --pane <pane-id> --source agent --yes --json
@@ -143,6 +144,8 @@ The wrapper must stream Pane stdout/stderr without reformatting because `pane --
 `runpane repos add` registers an existing git repository with the running local Pane daemon. It does not create directories or initialize git repositories by default.
 
 `runpane panes list` lists Pane sessions, optionally scoped to one saved repository.
+
+`runpane panes cost` reports estimated token costs per Pane for the last 30 days, including per-model breakdowns and cache efficiency; unscoped output includes an Unattributed bucket that reconciles against workspace totals.
 
 `runpane panes create` connects to the running local Pane daemon, resolves the requested saved base repository, creates user-visible Pane sessions backed by Pane-managed worktrees/branches, opens terminal-backed tool tabs, and optionally sends initial input to the started tool. Built-in agent panes and `--source agent` default to background/no-focus unless `--focus` is passed. New Panes are pinned into the UI's favorite/pin set by default; pass `--no-pinned` to opt out. Panes created interactively in the Pane UI are unaffected.
 
@@ -195,6 +198,7 @@ Brief tools:
 - `repos list`: List repositories saved in the running Pane app.
 - `repos add`: Register an existing git repository with the running Pane app.
 - `panes list`: List Pane sessions, optionally scoped to a saved repository.
+- `panes cost`: Report estimated token cost per Pane, with per-model breakdown and cache efficiency.
 - `panes create`: Create user-visible Panes (Pane sessions) backed by Pane-managed worktrees for feature/PR work and open terminal-backed tool tabs.
 - `panes archive`: Archive a Pane exactly like the UI Archive action, including safe removal of its Pane-managed git worktree.
 - `panes pin`: Declaratively pin a Pane (the Pane UI's favorite/pin star) without changing focus.

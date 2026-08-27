@@ -81,7 +81,7 @@ describe('getPricingSource', () => {
 
 describe('estimateCostUsd', () => {
   it('prices a Claude request across all four token classes', () => {
-    const { costUsd, complete } = estimateCostUsd({
+    const { costUsd, complete, cacheReadCostUsd } = estimateCostUsd({
       model: 'claude-opus-5',
       inputTokens: 1_000_000,
       outputTokens: 1_000_000,
@@ -91,6 +91,7 @@ describe('estimateCostUsd', () => {
     expect(complete).toBe(true);
     // Bundled: 15 + 75 + 1.5 + 18.75 = 110.25
     expect(costUsd).toBeCloseTo(15 + 75 + 1.5 + 18.75, 6);
+    expect(cacheReadCostUsd).toBeCloseTo(1.5, 6);
   });
 
   it('prices a Codex request', () => {

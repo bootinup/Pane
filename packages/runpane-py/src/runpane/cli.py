@@ -31,6 +31,7 @@ from .local_control import (
     run_panels_wait,
     run_panes_archive,
     run_panes_create,
+    run_panes_cost,
     run_panes_list,
     run_panes_pin,
     run_panes_rename,
@@ -188,6 +189,8 @@ def dispatch_parsed_command(parsed: ParsedArgs, telemetry_context: WrapperTeleme
         return run_repos_add(parsed)
     if parsed.command == "panes list":
         return run_panes_list(parsed)
+    if parsed.command == "panes cost":
+        return run_panes_cost(parsed)
     if parsed.command == "workspace state":
         return run_workspace_state(parsed)
     if parsed.command == "watch":
@@ -667,6 +670,7 @@ def is_runpane_local_command(command: str) -> bool:
         "workspace state",
         "watch",
         "panes list",
+        "panes cost",
         "panes create",
         "panes archive",
         "panes pin",

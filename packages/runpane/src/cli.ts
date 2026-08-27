@@ -27,6 +27,7 @@ import {
   runPanelsWait,
   runPanesArchive,
   runPanesCreate,
+  runPanesCost,
   runPanesList,
   runPanesPin,
   runPanesRename,
@@ -109,6 +110,10 @@ async function dispatchParsedCommand(parsed: ParsedArgs, telemetryContext: Wrapp
 
   if (parsed.command === 'panes list') {
     return runPanesList(parsed);
+  }
+
+  if (parsed.command === 'panes cost') {
+    return runPanesCost(parsed);
   }
 
   if (parsed.command === 'workspace state') {

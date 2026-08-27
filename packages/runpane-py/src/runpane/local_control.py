@@ -55,6 +55,20 @@ def run_panes_list(parsed: Any) -> int:
     return 0
 
 
+def run_panes_cost(parsed: Any) -> int:
+    result = invoke_daemon("runpane:panes:cost", [{
+        **optional_value("repo", parsed.repo),
+        **optional_value("paneId", parsed.pane_id),
+    }], pane_dir=parsed.pane_dir)
+
+    if parsed.json:
+        print_json(result)
+        return 0
+
+    print_pane_cost_result(result)
+    return 0
+
+
 def run_workspace_state(parsed: Any) -> int:
     result = invoke_daemon(
         "runpane:workspace:state",
@@ -736,6 +750,36 @@ def print_pane_list_result(result: Dict[str, Any]) -> None:
         repo = f" {pane.get('repoName')}" if pane.get("repoName") else ""
         pinned = " pinned" if pane.get("pinned") else ""
         print(f"{pane.get('id')}\t{pane.get('name')}\t{pane.get('status')}{pinned}\t{pane.get('panelCount')} panels\t{pane.get('worktreePath')}{repo}")
+
+
+def print_pane_cost_result(result: Dict[str, Any]) -> None:
+    for pane in result.get("panes", []):
+        hit_rate = int(pane.get("cacheHitRate", 0) * 100 + 0.5)
+        uncached_cost = format_pane_cost(pane.get("uncachedCostUsd", 0), pane.get("costIncomplete", False))
+        total_cost = format_pane_cost(pane.get("estimatedCostUsd", 0), pane.get("costIncomplete", False))
+        print(f"{pane.get('paneId')}\t{pane.get('paneName')}\t{uncached_cost} uncached\t{total_cost} total\t{hit_rate}% hit")
+        print_pane_cost_models(pane.get("byModel", []))
+    unattributed = result.get("unattributed")
+    if unattributed:
+        hit_rate = int(unattributed.get("cacheHitRate", 0) * 100 + 0.5)
+        uncached_cost = format_pane_cost(unattributed.get("uncachedCostUsd", 0), unattributed.get("costIncomplete", False))
+        total_cost = format_pane_cost(unattributed.get("estimatedCostUsd", 0), unattributed.get("costIncomplete", False))
+        print(f"Unattributed\t{uncached_cost} uncached\t{total_cost} total\t{hit_rate}% hit")
+        print_pane_cost_models(unattributed.get("byModel", []))
+    totals = result.get("totals")
+    if totals:
+        total_cost = format_pane_cost(totals.get("estimatedCostUsd", 0), totals.get("costIncomplete", False))
+        print(f"Total\t{total_cost}\t{totals.get('totalTokens', 0)} tokens")
+
+
+def format_pane_cost(cost_usd: float, cost_incomplete: bool) -> str:
+    return "n/a" if cost_incomplete else f"${cost_usd:.4f}"
+
+
+def print_pane_cost_models(models: list[Dict[str, Any]]) -> None:
+    for model in models:
+        cost = "n/a" if model.get("costIncomplete") else f"${model.get('estimatedCostUsd', 0):.4f}"
+        print(f"  {model.get('model')}\t{model.get('totalTokens', 0)} tokens\t{cost}")
 
 
 def print_pane_create_result(result: Dict[str, Any]) -> None:

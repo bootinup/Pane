@@ -8,7 +8,13 @@ import { BarChart } from '../ui/charts/BarChart';
 import { DonutChart } from '../ui/charts/DonutChart';
 import { formatTokens, formatUsd } from '../ui/charts/chartScales';
 import { LimitBar, LimitStatusBanners, CreditsLine } from './ProviderLimits';
-import { DEFAULT_USAGE_RANGE_DAYS, type UsageProvider, type UsageReport } from '../../../../shared/types/usage';
+import {
+  DEFAULT_USAGE_RANGE_DAYS,
+  type UsageByPane,
+  type UsagePaneCostSlice,
+  type UsageProvider,
+  type UsageReport,
+} from '../../../../shared/types/usage';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Poll while a scan is running so the progress line stays honest. */
@@ -42,6 +48,28 @@ const SERIES_COLORS = {
 
 const MODEL_COLORS = ['#4f8ef7', '#37b877', '#e0913a', '#c765d6', '#e05a6b', '#3fb8c4', '#8f8ff0', '#c2a63a'];
 
+type PaneSortKey =
+  | 'paneName'
+  | 'totalTokens'
+  | 'estimatedCostUsd'
+  | 'uncachedCostUsd'
+  | 'cacheHitRate'
+  | 'cacheReadTokens'
+  | 'uncachedInputTokens'
+  | 'cacheSavingsUsd';
+type PaneSortDirection = 'asc' | 'desc';
+
+const PANE_SORT_COLUMNS: Array<{ key: PaneSortKey; label: string }> = [
+  { key: 'paneName', label: 'Pane' },
+  { key: 'totalTokens', label: 'Tokens' },
+  { key: 'estimatedCostUsd', label: 'Total' },
+  { key: 'uncachedCostUsd', label: 'Uncached' },
+  { key: 'cacheHitRate', label: 'Cache hit' },
+  { key: 'cacheReadTokens', label: 'Cache read' },
+  { key: 'uncachedInputTokens', label: 'Uncached input' },
+  { key: 'cacheSavingsUsd', label: 'Saved' },
+];
+
 function StatCard({
   label,
   value,
@@ -57,6 +85,48 @@ function StatCard({
       <p className="mt-0.5 text-lg font-semibold tabular-nums text-text-primary">{value}</p>
       {detail && <p className="text-[10px] text-text-tertiary">{detail}</p>}
     </div>
+  );
+}
+
+function PaneCostCells({ pane }: { pane: UsagePaneCostSlice }) {
+  const cost = (value: number) => pane.costIncomplete ? 'n/a' : formatUsd(value);
+  return (
+    <>
+      <td className="px-2 py-2 tabular-nums text-text-secondary">{formatTokens(pane.totalTokens)}</td>
+      <td className="px-2 py-2 tabular-nums text-text-secondary">{cost(pane.estimatedCostUsd)}</td>
+      <td className="px-2 py-2 tabular-nums text-text-primary">{cost(pane.uncachedCostUsd)}</td>
+      <td className="px-2 py-2 tabular-nums text-text-secondary">{Math.round(pane.cacheHitRate * 100)}%</td>
+      <td className="px-2 py-2 tabular-nums text-text-secondary">{formatTokens(pane.cacheReadTokens)}</td>
+      <td className="px-2 py-2 tabular-nums text-text-secondary">{formatTokens(pane.uncachedInputTokens)}</td>
+      <td className="px-2 py-2 tabular-nums text-status-success">{cost(pane.cacheSavingsUsd)}</td>
+      <td className="px-2 py-2 text-[10px] text-text-tertiary">
+        {pane.byModel.length > 0 ? (
+          <ul className="space-y-0.5">
+            {pane.byModel.map(model => (
+              <li key={`${model.provider}-${model.model}`} className="whitespace-nowrap">
+                {model.model} · {formatTokens(model.totalTokens)} · {model.costIncomplete ? 'n/a' : formatUsd(model.estimatedCostUsd)}
+              </li>
+            ))}
+          </ul>
+        ) : '—'}
+      </td>
+    </>
+  );
+}
+
+function PaneUsageRow({ pane }: { pane: UsageByPane }) {
+  return (
+    <tr className="border-b border-border-primary/60 last:border-b-0">
+      <td className="px-2 py-2" title={pane.worktreePath}>
+        <span className="font-medium text-text-primary">{pane.paneName}</span>
+        {pane.archived && (
+          <span className="ml-1.5 rounded bg-surface-tertiary px-1 py-0.5 text-[9px] uppercase tracking-wide text-text-muted">
+            archived
+          </span>
+        )}
+      </td>
+      <PaneCostCells pane={pane} />
+    </tr>
   );
 }
 
@@ -80,6 +150,10 @@ export function UsageView() {
   const [downloadStatus, setDownloadStatus] = useState<'idle' | 'capturing' | 'done'>('idle');
   const [shareStatus, setShareStatus] = useState<'idle' | 'capturing' | 'done'>('idle');
   const [showWatermark, setShowWatermark] = useState(false);
+  const [paneSort, setPaneSort] = useState<{ key: PaneSortKey; direction: PaneSortDirection }>({
+    key: 'uncachedCostUsd',
+    direction: 'desc',
+  });
   /** Series switched off in the legend — see `visibleAreaSeries`. */
   const [hiddenSeries, setHiddenSeries] = useState<string[]>([]);
 
@@ -262,6 +336,26 @@ export function UsageView() {
     if (readable === 0) return null;
     return totals.cacheReadTokens / readable;
   }, [report]);
+
+  const sortedPanes = useMemo(() => {
+    const panes = [...(report?.byPane.panes ?? [])];
+    const multiplier = paneSort.direction === 'asc' ? 1 : -1;
+    return panes.sort((a, b) => {
+      const comparison = paneSort.key === 'paneName'
+        ? a.paneName.localeCompare(b.paneName)
+        : a[paneSort.key] - b[paneSort.key];
+      return comparison * multiplier || a.paneName.localeCompare(b.paneName);
+    });
+  }, [paneSort, report]);
+
+  const updatePaneSort = useCallback((key: PaneSortKey) => {
+    setPaneSort(current => ({
+      key,
+      direction: current.key === key
+        ? current.direction === 'asc' ? 'desc' : 'asc'
+        : key === 'paneName' ? 'asc' : 'desc',
+    }));
+  }, []);
 
   /** Anthropic vs OpenAI roll-up — the split the model list alone doesn't show. */
   const providerBars = useMemo(() => {
@@ -583,6 +677,61 @@ export function UsageView() {
                 />
               </section>
             </div>
+
+            <section
+              data-testid="usage-by-pane"
+              className="rounded border border-border-primary bg-surface-secondary p-3"
+            >
+              <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-text-tertiary">
+                By pane
+              </h2>
+              {sortedPanes.length === 0 && report.byPane.unattributed.messageCount === 0 ? (
+                <p className="text-xs text-text-muted">No pane usage in this range.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[980px] border-collapse text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-border-primary">
+                        {PANE_SORT_COLUMNS.map(column => (
+                          <th
+                            key={column.key}
+                            aria-sort={paneSort.key === column.key
+                              ? paneSort.direction === 'asc' ? 'ascending' : 'descending'
+                              : 'none'}
+                            className="px-2 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-text-tertiary"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => updatePaneSort(column.key)}
+                              className="rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-interactive"
+                            >
+                              {column.label}
+                            </button>
+                          </th>
+                        ))}
+                        <th className="px-2 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
+                          Models
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedPanes.map(pane => (
+                        <PaneUsageRow key={pane.paneId} pane={pane} />
+                      ))}
+                      {report.byPane.unattributed.messageCount > 0 && (
+                        <tr
+                          className="border-t border-border-primary text-text-muted"
+                          title="Events outside any pane's lifetime or with no matching worktree"
+                        >
+                          <td className="px-2 py-2 font-medium">Unattributed</td>
+                          <PaneCostCells pane={report.byPane.unattributed} />
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
 
             <footer className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-text-muted">
               <span>{report.index.eventsIndexed.toLocaleString()} messages indexed from {report.index.filesTracked.toLocaleString()} transcripts.</span>
