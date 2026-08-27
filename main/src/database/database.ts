@@ -2373,6 +2373,40 @@ export class DatabaseService {
         // Don't throw - allow app to continue
       }
     }
+
+    // Track which parser produced each transcript index, so a parser fix can
+    // invalidate stale rows instead of only applying to future transcripts.
+    // SAFETY: SQLite PRAGMA table_info returns the SqliteTableInfo projection.
+    const usageFilesInfo = this.db
+      .prepare("PRAGMA table_info(usage_files)")
+      .all() as SqliteTableInfo[];
+    const usageFilesExists = usageFilesInfo.length > 0;
+    const hasParserVersion = usageFilesInfo.some(
+      (col: SqliteTableInfo) => col.name === "parser_version",
+    );
+
+    if (usageFilesExists && !hasParserVersion) {
+      this.db
+        .prepare(
+          "ALTER TABLE usage_files ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0",
+        )
+        .run();
+      console.log("[Database] Added parser_version column to usage_files table");
+    }
+
+    // Codex states the model, session and cwd once at the top of a transcript.
+    // A scan resuming from a stored offset never sees those lines, so what they
+    // said is kept next to the offset they belong to.
+    const hasParseContext = usageFilesInfo.some(
+      (col: SqliteTableInfo) => col.name === "parse_context",
+    );
+
+    if (usageFilesExists && !hasParseContext) {
+      this.db
+        .prepare("ALTER TABLE usage_files ADD COLUMN parse_context TEXT")
+        .run();
+      console.log("[Database] Added parse_context column to usage_files table");
+    }
   }
 
   // Project operations
