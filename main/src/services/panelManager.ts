@@ -72,6 +72,13 @@ class PanelManager {
           });
         }
       }
+      // Browser panels used to be created as permanent default tabs. Those
+      // legacy defaults (marked permanent, never opened by the user) are
+      // dropped; Browser is now an ordinary tool opened from the "+" menu.
+      if (panel.type === 'browser' && panel.metadata?.permanent) {
+        databaseService.deletePanel(panel.id);
+        return;
+      }
       // Cache the panel
       this.panels.set(panel.id, panel);
     });
@@ -209,21 +216,6 @@ class PanelManager {
     }
   }
 
-  async ensureBrowserPanel(sessionId: string): Promise<void> {
-    const panels = this.getPanelsForSession(sessionId);
-    const hasBrowser = panels.some(p => p.type === 'browser');
-
-    if (!hasBrowser) {
-      console.log(`[PanelManager] Creating browser panel for session ${sessionId}`);
-      await this.createPanel({
-        sessionId,
-        type: 'browser',
-        title: 'Browser',
-        metadata: { permanent: true }
-      });
-    }
-  }
-
   async deletePanel(panelId: string): Promise<void> {
     return await withLock(`panel-delete-${panelId}`, async () => {
       const panel = this.getPanel(panelId);
@@ -249,9 +241,12 @@ class PanelManager {
       // If this was the active panel, activate another one
       const activePanelId = databaseService.getActivePanel(panel.sessionId)?.id;
       if (activePanelId === panelId) {
+        // Prefer a working tab: Explorer and Review live in the inspector rail,
+        // so activating one of those would leave the stage empty.
         const otherPanels = this.getPanelsForSession(panel.sessionId).filter(p => p.id !== panelId);
-        if (otherPanels.length > 0) {
-          await this.setActivePanel(panel.sessionId, otherPanels[0].id);
+        const nextPanel = otherPanels.find(p => p.type !== 'explorer' && p.type !== 'diff') ?? otherPanels[0];
+        if (nextPanel) {
+          await this.setActivePanel(panel.sessionId, nextPanel.id);
         } else {
           await this.setActivePanel(panel.sessionId, null);
         }
@@ -259,7 +254,11 @@ class PanelManager {
 
       // Track that this panel type was explicitly closed by the user
       // This prevents auto-recreation when the session is reopened
-      databaseService.addClosedPanelType(panel.sessionId, panel.type);
+      // Editor tabs are opened per file, so closing one says nothing about
+      // wanting the type back.
+      if (panel.type !== 'editor') {
+        databaseService.addClosedPanelType(panel.sessionId, panel.type);
+      }
 
       // Remove from database
       databaseService.deletePanel(panelId);

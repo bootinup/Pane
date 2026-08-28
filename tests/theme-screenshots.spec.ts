@@ -259,17 +259,17 @@ async function openSession(page: Page, theme: string, opts: { highContrast?: boo
   const expandRepo = page.getByRole('button', { name: /^Expand repository pane$/ });
   if (await expandRepo.isVisible().catch(() => false)) await expandRepo.click();
   await page.getByRole('button', { name: session.name, exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Review', exact: true })).toBeVisible();
-  await page.getByRole('tab', { name: 'Review', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Changes', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Changes', exact: true }).click();
 
   const expandTerminal = page.getByRole('button', { name: 'Expand terminal', exact: true });
   if (await expandTerminal.isVisible().catch(() => false)) await expandTerminal.click();
   await expect(page.locator('.pane-terminal-shell-body .xterm-screen').first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('status', { name: 'Loading terminal' })).toHaveCount(0);
-  // Expand the single changed file so the diff view (add/remove tints) is visible.
-  const expandFile = page.getByRole('button', { name: /^Expand diff for frontend\/src\/contexts\/themeContextValue\.ts$/ });
-  await expect(expandFile).toBeVisible({ timeout: 15_000 });
-  await expandFile.click();
+  // Open the single changed file as a diff tab so the add/remove tints are visible.
+  const openFile = page.getByRole('button', { name: /^Open diff for frontend\/src\/contexts\/themeContextValue\.ts$/ });
+  await expect(openFile).toBeVisible({ timeout: 15_000 });
+  await openFile.click();
   await expect(page.locator('.diff-tailwindcss-wrapper').first()).toBeVisible({ timeout: 15_000 });
   // Let xterm replay + shiki highlighting settle before capturing.
   await page.mouse.move(4, 4);

@@ -45,6 +45,8 @@ type ElectronApiMockOptions = {
   }>;
   initialExecutions?: JsonObject[];
   initialCombinedDiff?: JsonObject | null;
+  /** Seeded split layout for the session under test (panels:get-layout). */
+  initialLayout?: JsonObject | null;
   initialTerminalStates?: Record<string, JsonObject>;
   initialAgentUsage?: JsonObject;
   initialUsageReport?: JsonObject;
@@ -304,6 +306,14 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
     });
 
     const invoke = (channel: string, key?: string, value?: string) => {
+      if (channel === 'panels:get-layout') {
+        return success(clone(mockOptions.initialLayout ?? null));
+      }
+      if (channel === 'panels:shouldAutoCreate') {
+        // Fixtures seed their own panels; the app must not grow a terminal.
+        // The caller reads the bare boolean, not an IPC envelope.
+        return Promise.resolve(false);
+      }
       if (channel === 'panels:checkInitialized') {
         return Promise.resolve(Boolean(key && mockOptions.initialTerminalStates?.[key]));
       }
@@ -584,6 +594,19 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
         getSessionPanels: (sessionId: string) => success(
           clone(mockPanels.filter((panel) => panel.sessionId === sessionId)),
         ),
+        createPanel: (sessionId: string, type: string, title: string, initialState?: JsonObject) => {
+          const now = new Date().toISOString();
+          const panel = {
+            id: `mock-panel-${mockPanels.length + 1}`,
+            sessionId,
+            type,
+            title,
+            state: { isActive: false, customState: initialState?.customState ?? initialState ?? {} },
+            metadata: { createdAt: now, lastActiveAt: now, position: mockPanels.length },
+          };
+          mockPanels.push(panel);
+          return success(clone(panel));
+        },
         shouldAutoCreate: () => success(false),
       }),
       permissions: namespace({

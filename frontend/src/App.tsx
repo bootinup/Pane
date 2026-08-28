@@ -120,6 +120,7 @@ function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const activeProjectId = useNavigationStore(s => s.activeProjectId);
   const sidebarCollapsed = useNavigationStore(s => s.sidebarCollapsed);
+  const [titleBarControlsSlot, setTitleBarControlsSlot] = useState<HTMLDivElement | null>(null);
   const setSidebarCollapsed = useNavigationStore(s => s.setSidebarCollapsed);
 
   const handleToggleSidebar = useCallback(() => {
@@ -245,6 +246,13 @@ function App() {
     category: 'navigation',
     action: () => {
       if (sidebarCollapsed) handleToggleSidebar();
+      // Land on the selected pane (or the first row) so arrow keys work from here.
+      requestAnimationFrame(() => {
+        const shell = document.querySelector<HTMLElement>('.pane-sidebar-shell');
+        const target = shell?.querySelector<HTMLElement>('[aria-current="page"]')
+          ?? shell?.querySelector<HTMLElement>('button, [tabindex="0"]');
+        target?.focus();
+      });
     },
   });
 
@@ -825,7 +833,7 @@ function App() {
   return (
     <ContextMenuProvider>
       <div className="pane-app-shell h-screen flex flex-col overflow-hidden bg-bg-primary">
-        <WindowTitleBar projects={projects} />
+        <WindowTitleBar projects={projects} controlsSlotRef={setTitleBarControlsSlot} />
         <div className="pane-main-layout flex flex-1 min-h-0">
         <MainProcessLogger />
         <div
@@ -840,6 +848,7 @@ function App() {
             onResize={startResize}
             collapsed={sidebarCollapsed}
             onToggleCollapse={handleToggleSidebar}
+            titleBarControlsSlot={titleBarControlsSlot}
             onHelpClick={() => setIsHelpOpen(true)}
             onDocsClick={() => setIsDocsOpen(true)}
             onFeedbackClick={() => setIsFeedbackOpen(true)}

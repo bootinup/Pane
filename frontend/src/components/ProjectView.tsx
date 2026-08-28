@@ -10,10 +10,13 @@ import type { ToolPanel, ToolPanelType } from '../../../shared/types/panels';
 import type { PanelCreateOptions } from '../types/panelComponents';
 import { SessionProvider } from '../contexts/SessionContext';
 import { DetailPanel } from './DetailPanel';
+import type { InspectorTab } from './InspectorTabs';
 import { useResizable } from '../hooks/useResizable';
 import { CommitMessageDialog } from './session/CommitMessageDialog';
 import { SetTrackingBranchDialog } from './session/SetTrackingBranchDialog';
 import { useMainRepoGitActions } from '../hooks/useMainRepoGitActions';
+import { useProjectViewActionsStore } from '../stores/projectViewActionsStore';
+import { PANEL_CAPABILITIES } from '../../../shared/types/panels';
 import type { ProjectEnvironment } from '../../../shared/types/panels';
 
 interface ProjectViewProps {
@@ -61,8 +64,19 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
   // Detail panel state
   const [detailVisible, setDetailVisible] = useState(() => {
     const stored = localStorage.getItem('pane-project-detail-panel-visible');
-    return stored !== null ? stored === 'true' : false;
+    return stored !== null ? stored === 'true' : true;
   });
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>(() => {
+    const stored = localStorage.getItem('pane-project-inspector-tab');
+    return stored === 'files' || stored === 'changes' ? stored : 'details';
+  });
+  useEffect(() => {
+    localStorage.setItem('pane-project-inspector-tab', inspectorTab);
+  }, [inspectorTab]);
+  const openInspector = useCallback((tab: InspectorTab) => {
+    setInspectorTab(tab);
+    setDetailVisible(true);
+  }, []);
 
   // Persist detail panel visibility
   useEffect(() => {
@@ -71,9 +85,9 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
 
   // Right-side resizable
   const { width: detailWidth, startResize: startDetailResize } = useResizable({
-    defaultWidth: 320,
-    minWidth: 200,
-    maxWidth: 500,
+    defaultWidth: 360,
+    minWidth: 240,
+    maxWidth: 720,
     storageKey: 'pane-project-detail-panel-width',
     side: 'right'
   });
@@ -84,10 +98,9 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
       panelApi.loadPanelsForSession(mainRepoSessionId).then(async (loadedPanels) => {
         setPanels(mainRepoSessionId, loadedPanels);
 
-        // Pick default active: prefer diff, then explorer, then first panel
-        const fallback = loadedPanels.find(p => p.type === 'diff')
-          || loadedPanels.find(p => p.type === 'explorer')
-          || loadedPanels[0];
+        // Pick default active: the first working panel (Explorer and Review
+        // live in the inspector, not the stage).
+        const fallback = loadedPanels.find(p => p.type !== 'diff' && p.type !== 'explorer');
 
         const activePanel = await panelApi.getActivePanel(mainRepoSessionId);
         if (activePanel) {
@@ -106,10 +119,36 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
     [panels, mainRepoSessionId]
   );
 
-  const currentActivePanel = useMemo(
-    () => sessionPanels.find(p => p.id === activePanels[mainRepoSessionId || '']),
-    [sessionPanels, activePanels, mainRepoSessionId]
+  const filesPanel = useMemo(() => sessionPanels.find(p => p.type === 'explorer'), [sessionPanels]);
+  const changesPanel = useMemo(() => sessionPanels.find(p => p.type === 'diff'), [sessionPanels]);
+  const workingPanels = useMemo(
+    () => sessionPanels.filter(p => p.type !== 'explorer' && p.type !== 'diff'),
+    [sessionPanels]
   );
+
+  const currentActivePanel = useMemo(
+    () => workingPanels.find(p => p.id === activePanels[mainRepoSessionId || '']),
+    [workingPanels, activePanels, mainRepoSessionId]
+  );
+
+  // A persisted active panel that now lives in the inspector opens that tab
+  // and hands the stage to the first working panel.
+  const staleActiveHandledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!mainRepoSessionId) return;
+    const activeId = activePanels[mainRepoSessionId];
+    const stale = activeId ? sessionPanels.find(p => p.id === activeId && (p.type === 'explorer' || p.type === 'diff')) : undefined;
+    if (!stale) return;
+    const key = `${mainRepoSessionId}:${stale.id}`;
+    if (staleActiveHandledRef.current === key) return;
+    staleActiveHandledRef.current = key;
+    setInspectorTab(stale.type === 'diff' ? 'changes' : 'files');
+    const next = workingPanels[0];
+    if (next) {
+      setActivePanelInStore(mainRepoSessionId, next.id);
+      void panelApi.setActivePanel(mainRepoSessionId, next.id);
+    }
+  }, [mainRepoSessionId, activePanels, sessionPanels, workingPanels, setActivePanelInStore]);
 
   const detailSession = useMemo(() => {
     if (!activeMainRepoSession || !displayBranch) return activeMainRepoSession;
@@ -157,9 +196,9 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
     async (panel: ToolPanel) => {
       if (!mainRepoSessionId) return;
 
-      // Find next panel to activate
-      const panelIndex = sessionPanels.findIndex(p => p.id === panel.id);
-      const nextPanel = sessionPanels[panelIndex + 1] || sessionPanels[panelIndex - 1];
+      // Activate the neighbouring working tab (never an inspector panel).
+      const panelIndex = workingPanels.findIndex(p => p.id === panel.id);
+      const nextPanel = workingPanels[panelIndex + 1] || workingPanels[panelIndex - 1];
 
       // Remove from store first for immediate UI update
       removePanel(mainRepoSessionId, panel.id);
@@ -173,7 +212,7 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
       // Delete on backend
       await panelApi.deletePanel(panel.id);
     },
-    [mainRepoSessionId, sessionPanels, removePanel, setActivePanelInStore]
+    [mainRepoSessionId, workingPanels, removePanel, setActivePanelInStore]
   );
 
   const handlePanelCreate = useCallback(
@@ -205,6 +244,31 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
     [mainRepoSessionId, addPanel, setActivePanelInStore]
   );
   
+  // Expose this view's tab / inspector actions to the global hotkeys.
+  const setProjectViewActions = useProjectViewActionsStore((state) => state.setActions);
+  useEffect(() => {
+    setProjectViewActions({
+      toggleDetail: () => setDetailVisible((v) => !v),
+      showInspector: (tab) => { setInspectorTab(tab); setDetailVisible(true); },
+      addTerminal: () => { void handlePanelCreate('terminal'); },
+      tabCount: () => workingPanels.length,
+      selectTab: (index) => { const panel = workingPanels[index]; if (panel) handlePanelSelect(panel); },
+      cycleTab: (direction) => {
+        if (workingPanels.length < 2) return;
+        const current = workingPanels.findIndex((p) => p.id === currentActivePanel?.id);
+        const next = direction === 'next'
+          ? (current + 1) % workingPanels.length
+          : (current - 1 + workingPanels.length) % workingPanels.length;
+        handlePanelSelect(workingPanels[next]);
+      },
+      canCloseActiveTab: () => !!currentActivePanel
+        && !PANEL_CAPABILITIES[currentActivePanel.type]?.permanent
+        && !currentActivePanel.metadata?.permanent,
+      closeActiveTab: () => { if (currentActivePanel) handlePanelClose(currentActivePanel); },
+    });
+    return () => setProjectViewActions(null);
+  }, [setProjectViewActions, workingPanels, currentActivePanel, handlePanelCreate, handlePanelSelect, handlePanelClose]);
+
   // Get or create main repo session when panels are needed
   useEffect(() => {
     const requestGeneration = ++sessionRequestGeneration.current;
@@ -310,7 +374,7 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
         >
           {/* Tab bar at top */}
           <PanelTabBar
-            panels={sessionPanels}
+            panels={workingPanels}
             activePanel={currentActivePanel}
             onPanelSelect={handlePanelSelect}
             onPanelClose={handlePanelClose}
@@ -346,8 +410,8 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
                     <div className="h-3 w-2/3 bg-surface-tertiary rounded" />
                   </div>
                 </div>
-              ) : sessionPanels.length > 0 && currentActivePanel ? (
-                sessionPanels.map(panel => {
+              ) : workingPanels.length > 0 && currentActivePanel ? (
+                workingPanels.map(panel => {
                   const isActive = panel.id === currentActivePanel.id;
                   return (
                     <div
@@ -367,12 +431,14 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
                   );
                 })
               ) : (
-                <div className="flex-1 flex items-center justify-center text-text-secondary">
-                  <div className="text-center p-8">
-                    <div className="text-4xl mb-4">⚡</div>
-                    <h2 className="text-xl font-semibold mb-2">No Active Panel</h2>
-                    <p className="text-sm">Add a tool panel to get started</p>
-                  </div>
+                <div className="flex h-full items-center justify-center">
+                  <button
+                    type="button"
+                    onClick={() => handlePanelCreate('terminal')}
+                    className="flex h-7 items-center gap-2 rounded px-3 text-[13px] text-text-secondary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring-subtle"
+                  >
+                    Open a terminal
+                  </button>
                 </div>
               )}
             </div>
@@ -384,6 +450,12 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
               width={detailWidth}
               onResize={startDetailResize}
               mergeError={mainRepoGit.error}
+              inspectorTab={inspectorTab}
+              onInspectorTabChange={openInspector}
+              filesPanel={filesPanel}
+              changesPanel={changesPanel}
+              changesCount={activeMainRepoSession?.gitStatus?.filesChanged || undefined}
+              isMainRepo
             />
           </div>
         </SessionProvider>

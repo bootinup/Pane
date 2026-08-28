@@ -69,6 +69,18 @@ const panels = [
       position: 2,
     },
   },
+  {
+    id: 'accessibility-logs',
+    sessionId: session.id,
+    type: 'logs',
+    title: 'Logs',
+    state: { isActive: false, hasBeenViewed: true },
+    metadata: {
+      createdAt: new Date(0).toISOString(),
+      lastActiveAt: new Date(0).toISOString(),
+      position: 9,
+    },
+  },
 ];
 
 const remoteSession = {
@@ -226,10 +238,13 @@ test('Home and About are axe-clean and the modal contains and restores focus', a
   await openDesktop(page);
   await expectNoAxeViolations(page);
 
-  const aboutButton = page.getByRole('button', { name: /About Pane version/i });
-  await expect(aboutButton).toBeVisible();
-  await aboutButton.focus();
-  await aboutButton.click();
+  // About lives in the sidebar's ⋯ menu; the menu trigger is what focus returns to.
+  const menuButton = page.getByRole('button', { name: 'Sidebar menu' });
+  await menuButton.focus();
+  await menuButton.click();
+  const aboutItem = page.getByRole('menuitem', { name: /About Pane/i });
+  await expect(aboutItem).toBeVisible();
+  await aboutItem.click();
 
   const dialog = page.getByRole('dialog', { name: 'About Pane' });
   await expect(dialog).toBeVisible();
@@ -248,7 +263,7 @@ test('Home and About are axe-clean and the modal contains and restores focus', a
   await expectNoAxeViolations(page);
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
-  await expect(aboutButton).toBeFocused();
+  await expect(menuButton).toBeFocused();
 
   const themeTrigger = page.getByRole('button', { name: /\(sharp\)|\(rounded\)|OLED|Dusk|Forge|Ember|Aurora|Night Owl|Terracotta|Synthwave|Acid Terminal|Tokyo Rain|Folio|Newsprint|Walnut|Amber CRT|Teletype|Dot Matrix|Haar|Abyss|Understory|Colorblind Safe|Low Fatigue|High Legibility/ }).last();
   await themeTrigger.focus();
@@ -280,6 +295,9 @@ test('seeded Create Pane dialog is keyboard reachable and axe-clean', async ({ p
 
   const dialog = page.getByRole('dialog', { name: /New Pane in Accessibility fixture/i });
   await expect(dialog).toBeVisible();
+  // The dialog moves focus to the name input 100 ms after opening; let that
+  // land before taking focus elsewhere, or it steals it back mid-test.
+  await expect(page.getByRole('textbox', { name: 'Enter a name for your pane' })).toBeFocused();
   const branchCombobox = page.getByRole('combobox', { name: /Base Branch/i });
   await expect(branchCombobox).toBeVisible();
   await branchCombobox.click();
@@ -324,23 +342,26 @@ test('seeded pane exposes separate compound actions and arrow-keyed panel tabs',
   await expect(paneButton).not.toHaveAttribute('aria-current', 'page');
   await paneButton.click();
 
-  const explorerTab = page.getByRole('tab', { name: /^Explorer/ }).first();
+  // Explorer lives in the right inspector now, not the tab strip.
+  await expect(page.getByRole('tablist', { name: 'Inspector' }).getByRole('tab', { name: 'Files' })).toBeVisible();
   const dashboardTab = page.getByRole('tab', { name: /^Dashboard/ }).first();
-  await expect(explorerTab).toHaveAttribute('aria-selected', 'true');
-  await explorerTab.focus();
-  await page.keyboard.press('ArrowRight');
-  await expect(dashboardTab).toBeFocused();
+  const logsTab = page.getByRole('tab', { name: /^Logs/ }).first();
+  await dashboardTab.click();
   await expect(dashboardTab).toHaveAttribute('aria-selected', 'true');
+  await dashboardTab.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(logsTab).toBeFocused();
+  await expect(logsTab).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press('Tab');
-  const closeDashboard = page.getByRole('button', { name: 'Close Dashboard' });
-  await expect(closeDashboard).toBeFocused();
+  const closeLogs = page.getByRole('button', { name: 'Close Logs' });
+  await expect(closeLogs).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect(dashboardTab).toHaveCount(0);
-  await expect(explorerTab).toBeFocused();
+  await expect(logsTab).toHaveCount(0);
+  await expect(dashboardTab).toBeFocused();
 
-  const explorerTabId = await explorerTab.getAttribute('id');
+  const explorerTabId = await dashboardTab.getAttribute('id');
   expect(explorerTabId).not.toBeNull();
-  await explorerTab.dblclick();
+  await dashboardTab.dblclick();
   const panelTablist = page.locator('[role="tablist"][aria-label="Panel tabs"]').first();
   await expect.poll(async () => (
     (await panelTablist.getAttribute('aria-owns'))?.split(' ').includes(explorerTabId!) ?? false
