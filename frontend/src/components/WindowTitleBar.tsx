@@ -87,8 +87,8 @@ interface WindowTitleBarProps {
 
 // SAFETY: Electron supports WebkitAppRegion although React's CSSProperties omits the vendor property.
 const CONTROLS_SLOT_STYLE = { WebkitAppRegion: 'no-drag' } as CSSProperties;
-// Traffic lights end around x=80; the overlay reports where its buttons stop.
-const MAC_CONTROLS_LEFT: CSSProperties = { left: 80 };
+// Traffic lights end around x=80; keep the shared gutter before app controls.
+const MAC_CONTROLS_LEFT: CSSProperties = { left: 80 + GUTTER_PX };
 const OVERLAY_CONTROLS_LEFT: CSSProperties = { left: `calc(env(titlebar-area-x, 0px) + ${GUTTER_PX}px)` };
 // The trailing slot hugs the end of the page's share of the strip: the window
 // edge on macOS, the overlay's caption buttons on Windows and Linux.
