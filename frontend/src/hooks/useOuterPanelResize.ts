@@ -33,12 +33,17 @@ export interface OuterResizeSeparatorHandlers {
   onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => void;
 }
 
+// Only one outer-panel drag may own the document's cursor and selection state
+// at a time, regardless of which separator (hook instance) started it.
+let activeDragOwner: object | null = null;
+
 export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPanelResizeOptions) {
   const [preferredPx, setPreferredPx] = useState<number | undefined>(() => (
     readOuterPanelPreference(config, window.localStorage)
   ));
   const [tentativePreferredPx, setTentativePreferredPx] = useState<number | undefined>();
   const transactionRef = useRef<PointerTransaction | null>(null);
+  const ownerRef = useRef<object>({});
   const activeTentativePreferredPx = transactionRef.current ? tentativePreferredPx : undefined;
   const size = useMemo(
     () => resolveOuterPanelSize(config, containerPx, activeTentativePreferredPx ?? preferredPx),
@@ -62,6 +67,7 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
     const transaction = transactionRef.current;
     if (!transaction) return false;
     transactionRef.current = null;
+    if (activeDragOwner === ownerRef.current) activeDragOwner = null;
     resetDocumentInteraction(transaction);
     return true;
   }, [resetDocumentInteraction]);
@@ -79,9 +85,12 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
 
   const onPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!policy.separatorVisible) return;
-    // One transaction owns the separator: a second pointer cannot restart it
-    // from the first pointer's preview.
-    if (transactionRef.current) return;
+    // Only the primary button of the primary pointer expresses resize intent;
+    // a right-click drift toward a context menu must not overwrite it.
+    if (event.button !== 0 || !event.isPrimary) return;
+    // One transaction owns all separators: a second pointer cannot restart
+    // this one from its preview, nor start a concurrent drag elsewhere.
+    if (transactionRef.current || activeDragOwner !== null) return;
     // A new transaction always starts from remembered intent: clear any
     // abandoned preview left behind when a separator disappeared mid-drag.
     setTentativePreferredPx(undefined);
@@ -89,6 +98,7 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
     event.currentTarget.focus();
     event.currentTarget.setPointerCapture(event.pointerId);
     const coordinate = config.axis === 'width' ? event.clientX : event.clientY;
+    activeDragOwner = ownerRef.current;
     transactionRef.current = {
       pointerId: event.pointerId,
       target: event.currentTarget,
@@ -122,6 +132,7 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
     ).effectivePx;
     const previous = resolveOuterPanelSize(config, containerPx, transaction.oldPreferred).effectivePx;
     transactionRef.current = null;
+    if (activeDragOwner === ownerRef.current) activeDragOwner = null;
     resetDocumentInteraction(transaction);
     if (displacement !== 0 && candidate > 0 && candidate !== previous) {
       commitValue(candidate);
@@ -141,6 +152,8 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
 
   const onKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!policy.separatorVisible) return;
+    // Ctrl/Meta/Alt arrow chords are OS navigation shortcuts, not resize intent.
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
     const step = event.shiftKey ? 50 : 10;
     let next: number | undefined;
     if (config.axis === 'width' && event.key === 'ArrowLeft') next = size.effectivePx + step;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 export interface ObservedContentBox {
   width: number;
@@ -18,7 +18,9 @@ export function useObservedContentBox<T extends HTMLElement>() {
     setElement(nextElement);
   }, []);
 
-  useEffect(() => {
+  // Measure before paint so the first committed frame already reflects the
+  // container instead of flashing a zero-sized surface.
+  useLayoutEffect(() => {
     if (!element) {
       setContentBox(previous => previous.width === 0 && previous.height === 0 ? previous : EMPTY_BOX);
       return;

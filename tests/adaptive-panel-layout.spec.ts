@@ -414,6 +414,147 @@ test('a second pointer cannot restart an active drag from its preview', async ({
   expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(`{"version":2,"preferredPx":${preview}}`);
 });
 
+test('non-primary buttons and modifier chords never express resize intent', async ({ page }) => {
+  const preference = '{"version":2,"preferredPx":500}';
+  await installFixture(page, { 'pane-detail-panel-width:v2': preference });
+  await openWorktree(page);
+
+  const inspector = page.locator('.pane-detail-panel-vertical');
+  const separator = page.getByRole('separator', { name: 'Resize inspector' });
+  await expect(inspector).toHaveCSS('width', '500px');
+  const start = await separator.boundingBox();
+  await page.mouse.move(start!.x + start!.width / 2, start!.y + 100);
+  await page.mouse.down({ button: 'right' });
+  await page.mouse.move(start!.x - 40, start!.y + 100);
+  await expect(inspector).toHaveCSS('width', '500px');
+  await page.mouse.up({ button: 'right' });
+  await expect(inspector).toHaveCSS('width', '500px');
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(preference);
+
+  await separator.focus();
+  await page.keyboard.press('Meta+ArrowLeft');
+  await page.keyboard.press('Control+ArrowLeft');
+  await page.keyboard.press('Alt+ArrowLeft');
+  await expect(inspector).toHaveCSS('width', '500px');
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(preference);
+  await page.keyboard.press('ArrowLeft');
+  await expect(inspector).toHaveCSS('width', '510px');
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe('{"version":2,"preferredPx":510}');
+});
+
+test('a drag while constrained commits the dragged preference and restores it after regrowth', async ({ page }) => {
+  await installFixture(page, { 'pane-detail-panel-width:v2': '{"version":2,"preferredPx":700}' });
+  await openWorktree(page);
+
+  const inspector = page.locator('.pane-detail-panel-vertical');
+  const separator = page.getByRole('separator', { name: 'Resize inspector' });
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await expect.poll(async () => (await inspector.boundingBox())!.width).toBeLessThan(700);
+  const constrained = (await inspector.boundingBox())!.width;
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe('{"version":2,"preferredPx":700}');
+
+  const start = await separator.boundingBox();
+  await page.mouse.move(start!.x + start!.width / 2, start!.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(start!.x + 60, start!.y + 100);
+  await page.mouse.up();
+  await expect.poll(async () => (await inspector.boundingBox())!.width).toBeLessThan(constrained);
+  const dragged = (await inspector.boundingBox())!.width;
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(`{"version":2,"preferredPx":${dragged}}`);
+
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await expect(inspector).toHaveCSS('width', `${dragged}px`);
+  await expect(separator).toBeVisible();
+});
+
+test('the swapped right terminal commits only its own v2 key', async ({ page }) => {
+  await installFixture(page, {
+    'pane-layout-swapped': 'true',
+    'pane-right-terminal-width:v2': '{"version":2,"preferredPx":400}',
+  });
+  await openWorktree(page);
+
+  const separator = page.getByRole('separator', { name: 'Resize terminal' });
+  await expect(separator).toHaveAttribute('aria-orientation', 'vertical');
+  await expect(separator).toHaveAttribute('aria-valuenow', '400');
+  await separator.focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(separator).toHaveAttribute('aria-valuenow', '410');
+  expect(await page.evaluate(() => [
+    localStorage.getItem('pane-right-terminal-width:v2'),
+    localStorage.getItem('pane-detail-panel-width:v2'),
+    localStorage.getItem('pane-project-detail-panel-width:v2'),
+    localStorage.getItem('pane-bottom-terminal-height:v2'),
+    localStorage.getItem('pane-bottom-detail-height:v2'),
+  ])).toEqual(['{"version":2,"preferredPx":410}', null, null, null, null]);
+});
+
+test('only one outer-panel drag owns document interaction state at a time', async ({ page }) => {
+  await installFixture(page, {
+    'pane-terminal-collapsed': 'false',
+    'pane-detail-panel-width:v2': '{"version":2,"preferredPx":500}',
+    'pane-bottom-terminal-height:v2': '{"version":2,"preferredPx":260}',
+  });
+  await openWorktree(page);
+
+  const inspector = page.locator('.pane-detail-panel-vertical');
+  const terminalDock = page.locator('.pane-terminal-dock');
+  const inspectorSeparator = page.getByRole('separator', { name: 'Resize inspector' });
+  const terminalSeparator = page.getByRole('separator', { name: 'Resize terminal' });
+  await expect(inspector).toHaveCSS('width', '500px');
+  await expect(terminalDock).toHaveCSS('height', '260px');
+
+  const start = await inspectorSeparator.boundingBox();
+  await page.mouse.move(start!.x + start!.width / 2, start!.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(start!.x - 40, start!.y + 100);
+  await expect.poll(async () => (await inspector.boundingBox())!.width).toBeGreaterThan(500);
+  expect(await page.evaluate(() => document.body.style.cursor)).toBe('col-resize');
+
+  // A real primary touch pointer on a different separator must not start a
+  // second drag while the mouse drag owns document interaction state.
+  const terminalBox = await terminalSeparator.boundingBox();
+  const touchX = terminalBox!.x + 120;
+  const touchY = terminalBox!.y + terminalBox!.height / 2;
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: touchX, y: touchY }] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: touchX, y: touchY - 30 }] });
+  await page.waitForTimeout(100);
+  await expect(terminalDock).toHaveCSS('height', '260px');
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => document.body.style.cursor)).toBe('col-resize');
+
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => ({
+    cursor: document.body.style.cursor,
+    userSelect: document.body.style.userSelect,
+  }))).toEqual({ cursor: '', userSelect: '' });
+  expect(await page.evaluate(() => localStorage.getItem('pane-bottom-terminal-height:v2'))).toBe('{"version":2,"preferredPx":260}');
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).not.toBe('{"version":2,"preferredPx":500}');
+});
+
+test('the first committed frame already reflects the container instead of a zero-sized surface', async ({ page }) => {
+  await installFixture(page, { 'pane-detail-panel-width:v2': '{"version":2,"preferredPx":500}' });
+  // Installed before the session view mounts: records every inline width the
+  // inspector carries from the moment it enters the DOM.
+  await page.evaluate(() => {
+    const seen: string[] = [];
+    new MutationObserver(() => {
+      const inspector = document.querySelector<HTMLElement>('.pane-detail-panel-vertical');
+      if (!inspector) return;
+      seen.push(inspector.style.width);
+      document.documentElement.dataset.paneInspectorWidths = seen.join(',');
+    }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+  });
+  await openWorktree(page);
+  await expect(page.locator('.pane-detail-panel-vertical')).toHaveCSS('width', '500px');
+  const widths = (await page.evaluate(() => document.documentElement.dataset.paneInspectorWidths ?? '')).split(',');
+  expect(widths).toContain('500px');
+  expect(widths).not.toContain('0px');
+});
+
 test('a disappearing separator rolls back tentative intent and restores document interaction state', async ({ page }) => {
   const preference = '{"version":2,"preferredPx":500}';
   await installFixture(page, { 'pane-detail-panel-width:v2': preference });
@@ -615,8 +756,20 @@ test('worktree and main-repository inspectors restore separate v2 preferences', 
   await page.getByText('Open session on main', { exact: true }).click();
   const projectInspector = page.locator('.pane-detail-panel-vertical');
   await expect(projectInspector).toHaveCSS('width', '520px');
-  await expect(page.getByRole('separator', { name: 'Resize main repository inspector' })).toBeVisible();
+  const projectSeparator = page.getByRole('separator', { name: 'Resize main repository inspector' });
+  await expect(projectSeparator).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe('{"version":2,"preferredPx":440}');
+
+  const start = await projectSeparator.boundingBox();
+  await page.mouse.move(start!.x + start!.width / 2, start!.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(start!.x + 40, start!.y + 100);
+  await page.mouse.up();
+  await expect.poll(async () => (await projectInspector.boundingBox())!.width).toBeLessThan(520);
+  const draggedProject = (await projectInspector.boundingBox())!.width;
+  expect(await page.evaluate(() => localStorage.getItem('pane-project-detail-panel-width:v2'))).toBe(`{"version":2,"preferredPx":${draggedProject}}`);
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe('{"version":2,"preferredPx":440}');
+  await page.evaluate(() => localStorage.setItem('pane-project-detail-panel-width:v2', '{"version":2,"preferredPx":520}'));
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByRole('button', { name: `Repository actions for ${project.name}`, exact: true }).click();
