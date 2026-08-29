@@ -19,11 +19,18 @@ interface XtermBufferLike {
   getLine(index: number): XtermBufferLineLike | undefined;
 }
 
-interface XtermLike {
+export interface TerminalThemeSnapshot {
+  background?: string;
+}
+
+interface XtermOptionsLike {
   buffer: { active: XtermBufferLike };
+  options: { theme?: TerminalThemeSnapshot };
+}
+
+interface XtermLike extends XtermOptionsLike {
   element?: HTMLElement;
   getSelection(): string;
-  options: object;
   scrollLines(lines: number): void;
   select(column: number, row: number, length: number): void;
   write(data: string, callback?: () => void): void;
@@ -43,7 +50,16 @@ export async function xtermEvaluate<T, Argument>(
   fn: ((terminal: XtermLike) => T) | ((terminal: XtermLike, argument: Argument) => T),
   argument?: Argument,
 ): Promise<T> {
-  return panelLocator.evaluate((element, { fnSource, argument }) => {
+  return evaluateXterm(panelLocator, fn.toString(), argument, true);
+}
+
+async function evaluateXterm<T, Argument>(
+  panelLocator: Locator,
+  fnSource: string,
+  argument: Argument | undefined,
+  requireWrite: boolean,
+): Promise<T> {
+  return panelLocator.evaluate((element, payload) => {
     interface HookNode {
       memoizedState?: unknown;
       next?: HookNode | null;
@@ -75,16 +91,17 @@ export async function xtermEvaluate<T, Argument>(
                 candidate instanceof Object
                 && 'options' in candidate
                 && 'buffer' in candidate
-                && 'write' in candidate
-                && candidate.write instanceof Function
+                && (!payload.requireWrite || (
+                  'write' in candidate && candidate.write instanceof Function
+                ))
               ) {
-                // SAFETY: fnSource comes from the typed callback passed to xtermEvaluate.
-                const evaluate = new Function(`return (${fnSource})`)() as (
+                // SAFETY: fnSource comes from a typed terminal helper callback in this module.
+                const evaluate = new Function(`return (${payload.fnSource})`)() as (
                   terminal: XtermLike,
                   argument: Argument,
                 ) => T;
-                // SAFETY: the structural checks above establish the xterm API used by callbacks.
-                return evaluate(candidate as XtermLike, argument);
+                // SAFETY: the selected capability gate establishes the xterm API used by the callback.
+                return evaluate(candidate as XtermLike, payload.argument);
               }
             }
             hook = hook.next;
@@ -95,7 +112,7 @@ export async function xtermEvaluate<T, Argument>(
       reactElement = reactElement.parentElement;
     }
     throw new Error('Unable to find xterm Terminal ref from panel React fiber');
-  }, { fnSource: fn.toString(), argument });
+  }, { fnSource, argument, requireWrite });
 }
 
 export async function writeLines(panelLocator: Locator, count: number): Promise<void> {
@@ -133,6 +150,18 @@ export async function readSnapshot(panelLocator: Locator): Promise<TerminalSnaps
       baseY: buffer.baseY,
     };
   });
+}
+
+export async function readTerminalTheme(panelLocator: Locator): Promise<TerminalThemeSnapshot> {
+  const readTheme = (terminal: XtermOptionsLike): TerminalThemeSnapshot => ({
+    background: terminal.options.theme?.background,
+  });
+  try {
+    return await evaluateXterm(panelLocator, readTheme.toString(), undefined, false);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('Unable to find xterm Terminal ref')) return {};
+    throw error;
+  }
 }
 
 export async function loseWebglContext(panelLocator: Locator): Promise<boolean> {

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { installElectronApiMock } from './electronApiMock';
+import { readTerminalTheme } from './terminalXterm';
 import type { AppearanceConfig } from '../shared/types/appearance';
 
 type AppearanceMock = {
@@ -142,40 +143,10 @@ test('terminal palette and rendered diff follow a System slot flip', async ({ pa
   await page.getByRole('tab', { name: 'Changes', exact: true }).click();
   const expandTerminal = page.getByRole('button', { name: 'Expand terminal', exact: true });
   if (await expandTerminal.isVisible().catch(() => false)) await expandTerminal.click();
-  await expect(page.locator('.xterm-screen').first()).toBeVisible({ timeout: 15_000 });
+  const terminalSurface = page.locator('.xterm-screen').first();
+  await expect(terminalSurface).toBeVisible({ timeout: 15_000 });
 
-  const terminalBackground = () => page.locator('.xterm-screen').first().evaluate((element) => {
-    interface HookNode { memoizedState?: unknown; next?: HookNode | null }
-    interface FiberNode { memoizedState?: HookNode | null; return?: FiberNode | null }
-    let reactElement: HTMLElement | null = element.parentElement;
-    while (reactElement) {
-      const fiberKey = Object.keys(reactElement).find((key) => key.startsWith('__reactFiber$'));
-      if (fiberKey) {
-        // SAFETY: React's private fiber key points to the linked fiber contract traversed below.
-        let fiber = Object.getOwnPropertyDescriptor(reactElement, fiberKey)?.value as FiberNode | null;
-        while (fiber) {
-          let hook = fiber.memoizedState;
-          while (hook) {
-            const ref = hook.memoizedState;
-            if (ref instanceof Object && 'current' in ref) {
-              const candidate = ref.current;
-              if (candidate instanceof Object && 'options' in candidate && 'buffer' in candidate) {
-                const options = candidate.options;
-                if (options instanceof Object && 'theme' in options) {
-                  const theme = options.theme;
-                  if (theme instanceof Object && 'background' in theme) return String(theme.background);
-                }
-              }
-            }
-            hook = hook.next;
-          }
-          fiber = fiber.return ?? null;
-        }
-      }
-      reactElement = reactElement.parentElement;
-    }
-    return '';
-  });
+  const terminalBackground = () => readTerminalTheme(terminalSurface).then((theme) => theme.background ?? '');
   await expect.poll(terminalBackground).not.toBe('');
   const lightBackground = await terminalBackground();
   await page.getByRole('button', { name: /^Open diff for example\.ts$/ }).click();

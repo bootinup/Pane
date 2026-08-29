@@ -12,7 +12,9 @@ import {
 } from '../services/agentContextManager';
 import { registerConfigHandlers } from './config';
 import type { PaneCommandValue } from '../daemon/commandRegistry';
-import { AppearanceValidationError } from '../../../shared/types/appearance';
+import { AppearanceValidationError, normalizeAppearance } from '../../../shared/types/appearance';
+import { applyNativeThemeSource } from '../services/appearanceService';
+import { ConfigManager } from '../services/configManager';
 
 interface TestIpcEvent { readonly sender?: { readonly id?: number } }
 type IpcHandler = (_event: TestIpcEvent, ...args: PaneCommandValue[]) => PaneCommandValue | Promise<PaneCommandValue>;
@@ -45,6 +47,19 @@ async function createTempProject(id: number): Promise<Project> {
     created_at: '',
     updated_at: '',
   };
+}
+
+async function createTempConfigManager(): Promise<ConfigManager> {
+  const configDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pane-config-ipc-'));
+  tempDirs.push(configDir);
+  const previousPaneDir = process.env.PANE_DIR;
+  try {
+    process.env.PANE_DIR = configDir;
+    return new ConfigManager();
+  } finally {
+    if (previousPaneDir === undefined) delete process.env.PANE_DIR;
+    else process.env.PANE_DIR = previousPaneDir;
+  }
 }
 
 function createServicesStub(projects: Project[]): AppServices {
@@ -152,16 +167,26 @@ describe('config IPC handlers', () => {
   it('applies the native theme source after a successful appearance update', async () => {
     nativeTheme.themeSource = 'system';
     const ipcMain = createIpcMainStub();
+    const configManager = await createTempConfigManager();
+    await configManager.initialize();
+    let configUpdatedCount = 0;
+    configManager.on('config-updated', (updated: AppConfig) => {
+      configUpdatedCount += 1;
+      applyNativeThemeSource(normalizeAppearance(updated).appearance);
+    });
+    const services = createServicesStub([]);
+    services.configManager = configManager;
     registerConfigHandlers(
       // SAFETY: The stub implements the IpcMain handle surface exercised by registerConfigHandlers.
       ipcMain as IpcMain,
-      createServicesStub([]),
+      services,
     );
 
     await expect(ipcMain.handlers.get('config:update')?.({}, {
       appearanceMode: 'fixed',
       theme: 'forge',
     })).resolves.toMatchObject({ success: true });
+    expect(configUpdatedCount).toBe(1);
     expect(nativeTheme.themeSource).toBe('dark');
   });
 });

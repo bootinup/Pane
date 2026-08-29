@@ -79,9 +79,17 @@ export function registerAppHandlers(ipcMain: IpcMain, services: AppServices): vo
     } catch {
       return { success: false, error: 'Invalid background color' };
     }
-    const stored = parseStoredBackgroundColors(
-      services.databaseService.getUserPreference(WINDOW_BACKGROUND_COLORS_KEY) ?? null,
-    );
+    let stored;
+    try {
+      stored = parseStoredBackgroundColors(
+        services.databaseService.getUserPreference(WINDOW_BACKGROUND_COLORS_KEY) ?? null,
+      );
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read window background colors',
+      };
+    }
     try {
       services.databaseService.setUserPreference(
         WINDOW_BACKGROUND_COLORS_KEY,
@@ -92,8 +100,15 @@ export function registerAppHandlers(ipcMain: IpcMain, services: AppServices): vo
     }
     const window = services.getMainWindow();
     if (!window || window.isDestroyed()) return { success: false, error: 'No window' };
-    window.setBackgroundColor(normalized.color);
-    return { success: true };
+    try {
+      window.setBackgroundColor(normalized.color);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to set window background color',
+      };
+    }
   });
 
   // System utilities

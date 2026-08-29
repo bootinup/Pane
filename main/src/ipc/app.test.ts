@@ -37,4 +37,47 @@ describe('window background color IPC', () => {
     expect(JSON.parse(preferences.get(WINDOW_BACKGROUND_COLORS_KEY) ?? '{}')).toEqual({ folio: '#aabbcc' });
     expect(await handler?.({}, { theme: 'forge', color: 'red' })).toEqual({ success: false, error: 'Invalid background color' });
   });
+
+  it('returns a structured failure when stored colors cannot be read', () => {
+    const handlers = new Map<string, Handler>();
+    const setBackgroundColor = vi.fn();
+    const ipcMain = { handle: (channel: string, handler: Handler) => handlers.set(channel, handler) };
+    const serviceFixture = {
+      app: { getVersion: () => 'test', isPackaged: false },
+      databaseService: {
+        getUserPreference: () => { throw new Error('background read failed'); },
+        setUserPreference: vi.fn(),
+      },
+      getMainWindow: () => ({ isDestroyed: () => false, setBackgroundColor }),
+    };
+    // SAFETY: The fixture supplies the exact AppServices members read by the registered handler.
+    registerAppHandlers(ipcMain as IpcMain, serviceFixture as AppServices);
+
+    expect(handlers.get('window:set-background-color')?.({}, {
+      theme: 'folio', color: '#aabbcc',
+    })).toEqual({ success: false, error: 'background read failed' });
+    expect(setBackgroundColor).not.toHaveBeenCalled();
+  });
+
+  it('returns a structured failure when the window rejects the color', () => {
+    const handlers = new Map<string, Handler>();
+    const ipcMain = { handle: (channel: string, handler: Handler) => handlers.set(channel, handler) };
+    const serviceFixture = {
+      app: { getVersion: () => 'test', isPackaged: false },
+      databaseService: {
+        getUserPreference: () => undefined,
+        setUserPreference: vi.fn(),
+      },
+      getMainWindow: () => ({
+        isDestroyed: () => false,
+        setBackgroundColor: () => { throw new Error('background apply failed'); },
+      }),
+    };
+    // SAFETY: The fixture supplies the exact AppServices members read by the registered handler.
+    registerAppHandlers(ipcMain as IpcMain, serviceFixture as AppServices);
+
+    expect(handlers.get('window:set-background-color')?.({}, {
+      theme: 'forge', color: '#112233',
+    })).toEqual({ success: false, error: 'background apply failed' });
+  });
 });
