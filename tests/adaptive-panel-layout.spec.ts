@@ -326,6 +326,8 @@ test('zero-height collapsed detail is inert until observed height returns', asyn
 
   await expect(horizontalDetailInner).not.toHaveAttribute('inert', '');
   await expect(horizontalDetail.getByRole('button', { name: 'Expand detail panel' })).toBeVisible();
+  await expandButton.focus();
+  await expect(expandButton).toBeFocused();
 
   await center.evaluate(element => {
     element.setAttribute('style', 'flex: 0 0 260px; width: 260px; height: 0; align-self: flex-start');

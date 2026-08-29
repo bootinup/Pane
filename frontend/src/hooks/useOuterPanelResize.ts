@@ -39,13 +39,12 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
   ));
   const [tentativePreferredPx, setTentativePreferredPx] = useState<number | undefined>();
   const transactionRef = useRef<PointerTransaction | null>(null);
+  const activeTentativePreferredPx = transactionRef.current ? tentativePreferredPx : undefined;
   const size = useMemo(
-    () => resolveOuterPanelSize(config, containerPx, tentativePreferredPx ?? preferredPx),
-    [config, containerPx, preferredPx, tentativePreferredPx],
+    () => resolveOuterPanelSize(config, containerPx, activeTentativePreferredPx ?? preferredPx),
+    [activeTentativePreferredPx, config, containerPx, preferredPx],
   );
   const policy = useMemo(() => resolveOuterPanelRenderPolicy(config, size, enabled), [config, enabled, size]);
-  const latestContainerPxRef = useRef(containerPx);
-  latestContainerPxRef.current = containerPx;
 
   const resetDocumentInteraction = useCallback((transaction: PointerTransaction) => {
     document.body.style.cursor = transaction.previousCursor;
@@ -59,13 +58,17 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
     }
   }, []);
 
-  const rollback = useCallback(() => {
+  const resetTransaction = useCallback(() => {
     const transaction = transactionRef.current;
-    if (!transaction) return;
+    if (!transaction) return false;
     transactionRef.current = null;
-    setTentativePreferredPx(undefined);
     resetDocumentInteraction(transaction);
+    return true;
   }, [resetDocumentInteraction]);
+
+  const rollback = useCallback(() => {
+    if (resetTransaction()) setTentativePreferredPx(undefined);
+  }, [resetTransaction]);
 
   const commitValue = useCallback((nextPreferred: number) => {
     const normalized = Math.max(1, Math.min(8192, Math.round(nextPreferred)));
@@ -107,13 +110,12 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
     if (!transaction || transaction.pointerId !== event.pointerId) return;
     const coordinate = config.axis === 'width' ? event.clientX : event.clientY;
     const displacement = transaction.startCoordinate - coordinate;
-    const latestContainer = latestContainerPxRef.current;
     const candidate = resolveOuterPanelSize(
       config,
-      latestContainer,
+      containerPx,
       transaction.startEffective + displacement,
     ).effectivePx;
-    const previous = resolveOuterPanelSize(config, latestContainer, transaction.oldPreferred).effectivePx;
+    const previous = resolveOuterPanelSize(config, containerPx, transaction.oldPreferred).effectivePx;
     transactionRef.current = null;
     resetDocumentInteraction(transaction);
     if (displacement !== 0 && candidate > 0 && candidate !== previous) {
@@ -121,7 +123,7 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
     } else {
       setTentativePreferredPx(undefined);
     }
-  }, [commitValue, config, resetDocumentInteraction]);
+  }, [commitValue, config, containerPx, resetDocumentInteraction]);
 
   const onPointerCancel = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (transactionRef.current?.pointerId !== event.pointerId) return;
@@ -149,10 +151,12 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
   }, [commitValue, config, containerPx, policy.separatorVisible, size]);
 
   useEffect(() => {
-    if (!policy.separatorVisible) rollback();
-  }, [policy.separatorVisible, rollback]);
+    if (!policy.separatorVisible) resetTransaction();
+  }, [policy.separatorVisible, resetTransaction]);
 
-  useEffect(() => rollback, [rollback]);
+  useEffect(() => () => {
+    resetTransaction();
+  }, [resetTransaction]);
 
   return {
     preferredPx,
