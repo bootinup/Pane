@@ -1536,7 +1536,7 @@ export const SessionView = memo(() => {
   const terminalResize = useOuterPanelResize({
     config: OUTER_PANEL_CONFIGS.bottomTerminal,
     containerPx: centerColumnBox.height,
-    enabled: !swappedLayoutRendered && !isTerminalCollapsed && !immersiveMode,
+    enabled: Boolean(defaultTerminalPanel) && !swappedLayoutRendered && !isTerminalCollapsed && !immersiveMode,
   });
   const terminalDockHeight = immersiveMode
     ? terminalResize.renderedPx

@@ -18,6 +18,7 @@ import { CommitMessageDialog } from './session/CommitMessageDialog';
 import { SetTrackingBranchDialog } from './session/SetTrackingBranchDialog';
 import { useMainRepoGitActions } from '../hooks/useMainRepoGitActions';
 import { useProjectViewActionsStore } from '../stores/projectViewActionsStore';
+import { useNavigationStore } from '../stores/navigationStore';
 import { PANEL_CAPABILITIES } from '../../../shared/types/panels';
 import type { ProjectEnvironment } from '../../../shared/types/panels';
 
@@ -85,11 +86,12 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
     localStorage.setItem('pane-project-detail-panel-visible', String(detailVisible));
   }, [detailVisible]);
 
+  const immersiveMode = useNavigationStore(s => s.immersiveMode);
   const projectContentBox = useObservedContentBox<HTMLDivElement>();
   const detailResize = useOuterPanelResize({
     config: OUTER_PANEL_CONFIGS.projectInspector,
     containerPx: projectContentBox.width,
-    enabled: detailVisible,
+    enabled: detailVisible && !immersiveMode,
   });
 
   // Load panels when main repo session changes (no auto-creation, matches worktree session behavior)

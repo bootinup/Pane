@@ -537,22 +537,77 @@ test('only one outer-panel drag owns document interaction state at a time', asyn
 
 test('the first committed frame already reflects the container instead of a zero-sized surface', async ({ page }) => {
   await installFixture(page, { 'pane-detail-panel-width:v2': '{"version":2,"preferredPx":500}' });
-  // Installed before the session view mounts: records every inline width the
-  // inspector carries from the moment it enters the DOM.
+  // Installed before the session view mounts. Samples the inspector's inline
+  // width at every microtask checkpoint after a DOM change and at every
+  // animation frame: a zero that survives to either point could be painted,
+  // whereas a zero overwritten inside the same synchronous commit cannot.
   await page.evaluate(() => {
     const seen: string[] = [];
-    new MutationObserver(() => {
+    const sample = () => {
       const inspector = document.querySelector<HTMLElement>('.pane-detail-panel-vertical');
       if (!inspector) return;
       seen.push(inspector.style.width);
       document.documentElement.dataset.paneInspectorWidths = seen.join(',');
-    }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+    };
+    new MutationObserver(sample).observe(document.documentElement, {
+      childList: true, subtree: true, attributes: true, attributeFilter: ['style'],
+    });
+    const frame = () => { sample(); requestAnimationFrame(frame); };
+    requestAnimationFrame(frame);
   });
   await openWorktree(page);
   await expect(page.locator('.pane-detail-panel-vertical')).toHaveCSS('width', '500px');
   const widths = (await page.evaluate(() => document.documentElement.dataset.paneInspectorWidths ?? '')).split(',');
   expect(widths).toContain('500px');
   expect(widths).not.toContain('0px');
+});
+
+test('a separator unmounted mid-drag releases drag ownership on pointer release', async ({ page }) => {
+  await installFixture(page, {
+    'pane-terminal-collapsed': 'false',
+    'pane-detail-panel-width:v2': '{"version":2,"preferredPx":500}',
+    'pane-bottom-terminal-height:v2': '{"version":2,"preferredPx":260}',
+  });
+  await openWorktree(page);
+
+  const terminalDock = page.locator('.pane-terminal-dock');
+  const terminalSeparator = page.getByRole('separator', { name: 'Resize terminal' });
+  await expect(terminalDock).toHaveCSS('height', '260px');
+  const start = await terminalSeparator.boundingBox();
+  await page.mouse.move(start!.x + 200, start!.y + start!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(start!.x + 200, start!.y - 30);
+  await expect.poll(async () => (await terminalDock.boundingBox())!.height).toBeGreaterThan(260);
+  expect(await page.evaluate(() => document.body.style.cursor)).toBe('row-resize');
+
+  // Keyboard still works under pointer capture: switch to the main-repository
+  // pane, which has no terminal, so the dock (and its separator) unmounts
+  // while the session view stays mounted.
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Tab' : 'Control+Tab');
+  await expect(terminalDock).toHaveCount(0);
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => ({
+    cursor: document.body.style.cursor,
+    userSelect: document.body.style.userSelect,
+  }))).toEqual({ cursor: '', userSelect: '' });
+  expect(await page.evaluate(() => localStorage.getItem('pane-bottom-terminal-height:v2'))).toBe('{"version":2,"preferredPx":260}');
+
+  // Every separator must still accept a drag afterwards (a stuck owner would
+  // reject this pointer-down on a different hook instance).
+  const inspector = page.locator('.pane-detail-panel-vertical');
+  const inspectorSeparator = page.getByRole('separator', { name: 'Resize inspector' });
+  await expect(inspectorSeparator).toBeVisible();
+  const inspectorStart = await inspectorSeparator.boundingBox();
+  const inspectorWidth = (await inspector.boundingBox())!.width;
+  await page.mouse.move(inspectorStart!.x + inspectorStart!.width / 2, inspectorStart!.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(inspectorStart!.x - 40, inspectorStart!.y + 100);
+  await expect.poll(async () => (await inspector.boundingBox())!.width).toBeGreaterThan(inspectorWidth);
+  await page.mouse.up();
+
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+Tab' : 'Control+Shift+Tab');
+  await expect(terminalDock).toHaveCSS('height', '260px');
+  await expect(terminalSeparator).toBeVisible();
 });
 
 test('a disappearing separator rolls back tentative intent and restores document interaction state', async ({ page }) => {
