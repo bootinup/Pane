@@ -75,6 +75,15 @@ import {
   WINDOW_CONTROLS_OVERLAY_HEIGHT,
   type WindowControlsOverlayColors,
 } from './utils/windowControlsOverlay';
+import { parseStoredBackgroundColors, WINDOW_BACKGROUND_COLORS_KEY } from './utils/windowBackgroundColor';
+import {
+  applyNativeThemeSource,
+  buildWindowAppearanceOptions,
+  ensureNativeThemeForwarding,
+  resolveOsPrefersDark,
+} from './services/appearanceService';
+import type { AppConfig } from './types/config';
+import { normalizeAppearance } from '../../shared/types/appearance';
 import type { WorktreeManager } from './services/worktreeManager';
 import type { GitStatusManager } from './services/gitStatusManager';
 import type { DatabaseService } from './database/database';
@@ -115,6 +124,7 @@ export const webviewContextMap = new Map<number, { panelId: string; sessionId: s
 // Active DevTools WebContentsViews, keyed by the page webContentsId they inspect
 const activeDevToolsViews = new Map<number, Electron.WebContentsView>();
 let devToolsHandlersRegistered = false;
+let appearanceConfigSyncRegistered = false;
 
 // Track partitions that already have the localhost header-stripping hook registered,
 // so we don't add duplicate listeners when multiple webviews share the same partition.
@@ -297,6 +307,17 @@ function readStoredOverlayColors(): WindowControlsOverlayColors | null {
   }
 }
 
+function readStoredBackgroundColors() {
+  try {
+    return parseStoredBackgroundColors(
+      databaseService?.getUserPreference(WINDOW_BACKGROUND_COLORS_KEY) ?? null,
+    );
+  } catch (error) {
+    console.error('Failed to read stored window background colors:', error);
+    return {};
+  }
+}
+
 async function createWindow() {
   // Strip iframe-blocking headers for localhost URLs (enables embedded browser panel)
   session.defaultSession.webRequest.onHeadersReceived(
@@ -330,6 +351,23 @@ async function createWindow() {
   }
 
   const windowControlsOverlay = shouldEnableWindowControlsOverlay(process.platform, process.env);
+  const appearance = normalizeAppearance(configManager.getConfig()).appearance;
+  const osPrefersDark = resolveOsPrefersDark();
+  applyNativeThemeSource(appearance);
+  // Appearance edits that arrive through the config file watcher (not the
+  // config:update IPC) must re-point nativeTheme too, or System mode resolves
+  // against a themeSource still pinned by a previous Fixed palette.
+  if (!appearanceConfigSyncRegistered) {
+    appearanceConfigSyncRegistered = true;
+    configManager.on('config-updated', (updated: AppConfig) => {
+      applyNativeThemeSource(normalizeAppearance(updated).appearance);
+    });
+  }
+  const appearanceOptions = buildWindowAppearanceOptions(
+    appearance,
+    osPrefersDark,
+    readStoredBackgroundColors(),
+  );
 
   // An icon path Electron cannot load is worse than none: on Windows it sets an
   // empty HICON, which clears the icon the window would otherwise inherit from
@@ -341,6 +379,7 @@ async function createWindow() {
   const mainWindowOptions: BrowserWindowConstructorOptions = {
     width: 1400,
     height: 900,
+    backgroundColor: appearanceOptions.backgroundColor,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -348,7 +387,10 @@ async function createWindow() {
       webviewTag: true,
       // The renderer has to know whether it owns the title bar before its first
       // paint, so this travels in argv rather than over async IPC.
-      additionalArguments: windowControlsOverlay ? [WINDOW_CONTROLS_OVERLAY_ARG] : [],
+      additionalArguments: [
+        ...appearanceOptions.additionalArguments,
+        ...(windowControlsOverlay ? [WINDOW_CONTROLS_OVERLAY_ARG] : []),
+      ],
     },
   };
   if (fs.existsSync(windowIconPath)) {
@@ -369,6 +411,7 @@ async function createWindow() {
       : { height: WINDOW_CONTROLS_OVERLAY_HEIGHT };
   }
   mainWindow = new BrowserWindow(mainWindowOptions);
+  ensureNativeThemeForwarding(() => mainWindow);
 
   // Set main window on analytics manager for IPC forwarding
   if (analyticsManager) {

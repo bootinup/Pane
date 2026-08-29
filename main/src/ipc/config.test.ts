@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import type { IpcMain } from 'electron';
+import { nativeTheme, type IpcMain } from 'electron';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Project } from '../database/models';
 import type { AppServices } from './types';
@@ -12,6 +12,7 @@ import {
 } from '../services/agentContextManager';
 import { registerConfigHandlers } from './config';
 import type { PaneCommandValue } from '../daemon/commandRegistry';
+import { AppearanceValidationError } from '../../../shared/types/appearance';
 
 interface TestIpcEvent { readonly sender?: { readonly id?: number } }
 type IpcHandler = (_event: TestIpcEvent, ...args: PaneCommandValue[]) => PaneCommandValue | Promise<PaneCommandValue>;
@@ -132,5 +133,35 @@ describe('config IPC handlers', () => {
     expect(activeContent).not.toContain(PANE_AGENT_CONTEXT_START);
     expect(inactiveContent).toBe('');
     await expect(fs.access(inactiveAgentsPath)).resolves.toBeUndefined();
+  });
+
+  it('returns the specific appearance validation error envelope', async () => {
+    const ipcMain = createIpcMainStub();
+    const services = createServicesStub([]);
+    services.configManager.updateConfig = async () => {
+      throw new AppearanceValidationError('systemLightTheme must be a light palette');
+    };
+    // SAFETY: The stub implements the IpcMain handle surface exercised by registerConfigHandlers.
+    registerConfigHandlers(ipcMain as IpcMain, services);
+    await expect(ipcMain.handlers.get('config:update')?.({}, { systemLightTheme: 'dark' })).resolves.toEqual({
+      success: false,
+      error: 'systemLightTheme must be a light palette',
+    });
+  });
+
+  it('applies the native theme source after a successful appearance update', async () => {
+    nativeTheme.themeSource = 'system';
+    const ipcMain = createIpcMainStub();
+    registerConfigHandlers(
+      // SAFETY: The stub implements the IpcMain handle surface exercised by registerConfigHandlers.
+      ipcMain as IpcMain,
+      createServicesStub([]),
+    );
+
+    await expect(ipcMain.handlers.get('config:update')?.({}, {
+      appearanceMode: 'fixed',
+      theme: 'forge',
+    })).resolves.toMatchObject({ success: true });
+    expect(nativeTheme.themeSource).toBe('dark');
   });
 });

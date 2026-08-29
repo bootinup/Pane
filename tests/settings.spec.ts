@@ -10,6 +10,7 @@ type SettingsMock = {
   failNextConfigUpdate: (error: string) => void;
   failNextPreferenceSet: (error: string) => void;
   setConfigGetFailures: (count: number) => void;
+  getBackgroundColorWrites: () => Array<{ theme: string; color: string }>;
 };
 
 async function bootSettings(page: Page, options: Parameters<typeof installElectronApiMock>[1] = {}) {
@@ -28,6 +29,54 @@ async function bootSettings(page: Page, options: Parameters<typeof installElectr
 }
 
 test.describe('Settings', () => {
+  test('pairs system palettes, preserves fixed selection, follows the OS, and rolls back failures', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await bootSettings(page);
+    await page.getByRole('button', { name: 'Appearance', exact: true }).click();
+    const mode = page.getByRole('radiogroup', { name: 'Appearance mode' });
+    await expect(mode.getByRole('radio', { name: 'System' })).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByRole('combobox', { name: 'Light palette' })).toHaveText('Light (rounded)');
+    await expect(page.getByRole('combobox', { name: 'Dark palette' })).toHaveText('Dark (sharp)');
+    await expect(page.getByText('Active now')).toBeVisible();
+
+    await page.getByRole('combobox', { name: 'Light palette' }).click();
+    await expect(page.getByRole('option', { name: /^Forge/ })).toHaveCount(0);
+    await page.getByRole('option', { name: /^Folio/ }).click();
+    await expect(page.locator('html')).toHaveClass(/folio/);
+    await page.getByRole('combobox', { name: 'Dark palette' }).click();
+    await expect(page.getByRole('option', { name: /^Folio/ })).toHaveCount(0);
+    await page.getByRole('option', { name: /^Forge/ }).click();
+    await expect(page.locator('html')).toHaveClass(/folio/);
+
+    await mode.getByRole('radio', { name: 'Fixed' }).click();
+    await expect(page.getByRole('combobox', { name: 'Theme' })).toHaveText('Light (rounded)');
+    await page.getByRole('combobox', { name: 'Theme' }).click();
+    await page.getByRole('option', { name: /^Night Owl(?! \(OLED\))/ }).click();
+    await expect(page.locator('html')).toHaveClass(/night-owl/);
+    await mode.getByRole('radio', { name: 'System' }).click();
+    await expect(page.locator('html')).toHaveClass(/folio/);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('html')).toHaveClass(/forge/);
+
+    await page.evaluate(() => {
+      // SAFETY: installElectronApiMock defines this test-only bridge before the page loads.
+      (window as typeof window & { __paneTestElectronMock: SettingsMock }).__paneTestElectronMock.failNextConfigUpdate('appearance save rejected');
+    });
+    await page.getByRole('combobox', { name: 'Dark palette' }).click();
+    await page.getByRole('option', { name: /^Abyss/ }).click();
+    await expect(page.getByRole('alert')).toContainText('appearance save rejected');
+    await expect(page.locator('html')).toHaveClass(/forge/);
+    await expect.poll(() => page.evaluate(() => {
+      // SAFETY: installElectronApiMock defines this test-only bridge before the page loads.
+      return (window as typeof window & { __paneTestElectronMock: SettingsMock }).__paneTestElectronMock.getBackgroundColorWrites().at(-1)?.theme;
+    })).toBe('forge');
+    const config = await page.evaluate(() => {
+      // SAFETY: installElectronApiMock defines this test-only bridge before the page loads.
+      return (window as typeof window & { __paneTestElectronMock: SettingsMock }).__paneTestElectronMock.getConfig();
+    });
+    expect(config).toMatchObject({ theme: 'night-owl', systemLightTheme: 'folio', systemDarkTheme: 'forge' });
+  });
+
   test('terminal font updates the live xterm only', async ({ page }) => {
     const now = new Date(0).toISOString();
     const project = {
@@ -439,7 +488,7 @@ test.describe('Settings', () => {
   });
 
   test('renders a dark theme without changing the settings layout', async ({ page }) => {
-    await bootSettings(page, { initialConfig: { theme: 'light-rounded' } });
+    await bootSettings(page, { initialConfig: { theme: 'light-rounded', appearanceMode: 'fixed' } });
     await page.getByRole('button', { name: 'Appearance', exact: true }).click();
     await page.getByRole('combobox', { name: 'Theme' }).click();
     // Options carry their picker description in the accessible name; match the label prefix (not the OLED variant).

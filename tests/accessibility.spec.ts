@@ -142,6 +142,7 @@ async function openDesktop(
 ): Promise<void> {
   await installElectronApiMock(page, {
     ...options,
+    initialConfig: { theme: 'light-rounded', appearanceMode: 'fixed', ...options.initialConfig },
     initialProjects: [project],
     initialSessions: [session],
     initialPanels: panels,

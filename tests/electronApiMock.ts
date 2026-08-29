@@ -11,6 +11,7 @@ import type {
 } from '../shared/types/remoteDaemon';
 import type { SubmitFeedbackRequest } from '../shared/types/feedback';
 import type { JsonObject, JsonValue } from '../shared/validation/boundaryDecoder';
+import { DEFAULT_APPEARANCE, LIGHT_THEMES, normalizeAppearance, type AppearanceConfig } from '../shared/types/appearance';
 
 type MockEventValue = JsonValue | object | undefined;
 type MockEventCallback = (...args: MockEventValue[]) => void;
@@ -28,6 +29,7 @@ type ElectronApiMockOptions = {
   platform?: 'darwin' | 'linux' | 'win32';
   /** Whether main handed the title bar to the page (Window Controls Overlay). */
   windowControlsOverlayEnabled?: boolean;
+  appearanceSnapshot?: boolean;
   availableShells?: Array<Record<string, string>>;
   configReadDelayMs?: number;
   configGetFailures?: number;
@@ -63,7 +65,10 @@ type ElectronApiMockOptions = {
 };
 
 export async function installElectronApiMock(page: Page, options: ElectronApiMockOptions = {}) {
-  await page.addInitScript((mockOptions: ElectronApiMockOptions) => {
+  type SerializedOptions = ElectronApiMockOptions & {
+    appearance: { defaults: AppearanceConfig; lightThemes: string[]; seeded: AppearanceConfig };
+  };
+  await page.addInitScript((mockOptions: SerializedOptions) => {
     if (mockOptions.notificationsSupported === false) {
       Reflect.deleteProperty(window, 'Notification');
     }
@@ -152,7 +157,9 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
     const configState: JsonObject = {
       remoteDaemon: clone(remoteDaemonConfig),
       defaultOrchestratorAgent: 'claude',
+      ...clone(mockOptions.appearance.defaults),
       ...clone(mockOptions.initialConfig ?? {}),
+      ...clone(mockOptions.appearance.seeded),
     };
     const paneChatSession = {
       id: '__pane_chat_session__',
@@ -234,6 +241,8 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
     let nextPreferenceSetError: string | null = null;
     let remainingConfigGetFailures = mockOptions.configGetFailures ?? 0;
     const configUpdates: JsonObject[] = [];
+    const backgroundColorWrites: Array<{ theme: string; color: string }> = [];
+    const titleBarOverlayWrites: JsonObject[] = [];
     const preferenceWrites: Array<{ key: string; value: string }> = [];
     const sessionDeleteCalls: string[] = [];
     const sessionFavoriteToggleCalls: string[] = [];
@@ -303,6 +312,9 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
         if (prop === 'onTerminalFontUpdated') {
           return (callback: MockEventCallback) => subscribe('config:terminal-font-updated', callback);
         }
+        if (prop === 'onNativeAppearanceUpdated') {
+          return (callback: MockEventCallback) => subscribe('window:appearance-native-updated', callback);
+        }
         if (prop === 'onSessionUpdated') {
           return (callback: MockEventCallback) => subscribe('session:updated', callback);
         }
@@ -360,7 +372,15 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
       },
       getPlatform: () => Promise.resolve(mockOptions.platform ?? 'linux'),
       windowControlsOverlayEnabled: mockOptions.windowControlsOverlayEnabled === true,
-      setTitleBarOverlay: () => success(),
+      appearanceSnapshot: mockOptions.appearanceSnapshot === false ? undefined : clone(mockOptions.appearance.seeded),
+      setTitleBarOverlay: (colors: JsonObject) => {
+        titleBarOverlayWrites.push(clone(colors));
+        return success();
+      },
+      setBackgroundColor: (payload: { theme: string; color: string }) => {
+        backgroundColorWrites.push(clone(payload));
+        return success();
+      },
       getVersionInfo: () => success({
         version: 'test',
         current: 'test',
@@ -581,6 +601,12 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
             const error = nextConfigUpdateError;
             nextConfigUpdateError = null;
             return Promise.resolve({ success: false, error });
+          }
+          if ('systemLightTheme' in updates && !mockOptions.appearance.lightThemes.includes(String(updates.systemLightTheme))) {
+            return Promise.resolve({ success: false, error: 'systemLightTheme must be a light palette' });
+          }
+          if ('systemDarkTheme' in updates && mockOptions.appearance.lightThemes.includes(String(updates.systemDarkTheme))) {
+            return Promise.resolve({ success: false, error: 'systemDarkTheme must be a dark palette' });
           }
           Object.assign(configState, updates);
           configUpdates.push(clone(updates));
@@ -955,6 +981,15 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
         getConfigUpdates() {
           return clone(configUpdates);
         },
+        getBackgroundColorWrites() {
+          return clone(backgroundColorWrites);
+        },
+        getTitleBarOverlayWrites() {
+          return clone(titleBarOverlayWrites);
+        },
+        emitNativeAppearanceUpdated(prefersDark: boolean) {
+          emit('window:appearance-native-updated', { prefersDark });
+        },
         getListenerCount(channel: string) {
           return listeners.get(channel)?.size ?? 0;
         },
@@ -1026,5 +1061,12 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
         },
       },
     });
-  }, options);
+  }, {
+    ...options,
+    appearance: {
+      defaults: DEFAULT_APPEARANCE,
+      lightThemes: [...LIGHT_THEMES],
+      seeded: normalizeAppearance(options.initialConfig ?? {}).appearance,
+    },
+  });
 }

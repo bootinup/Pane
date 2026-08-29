@@ -98,7 +98,7 @@ async function bootChromeFixture(page: Page, opts: BootOptions = {}) {
 
   await installElectronApiMock(page, {
     platform: 'darwin',
-    initialConfig: opts.theme ? { theme: opts.theme } : undefined,
+    initialConfig: opts.theme ? { theme: opts.theme, appearanceMode: 'fixed' } : undefined,
     initialProjects: [project],
     initialSessions: [{
       ...session,

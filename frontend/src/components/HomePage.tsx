@@ -11,7 +11,7 @@ import { Toggle } from './ui/Toggle';
 import { AddProjectDialog } from './AddProjectDialog';
 import { CloneFromGitHubDialog } from './CloneFromGitHubDialog';
 import { formatDistanceToNow, isValidTimestamp } from '../utils/timestampUtils';
-import { THEME_OPTIONS, getThemeLabel } from '../utils/themeOptions';
+import { getThemeLabel, themeOptionsForSlot } from '../utils/themeOptions';
 import type { Project } from '../types/project';
 import type { Session } from '../types/session';
 
@@ -167,7 +167,8 @@ function OpenProjectCard({
 }
 
 export function HomePage() {
-  const { theme, setTheme } = useTheme();
+  const { theme, appearance, activeSystemSlot, setTheme } = useTheme();
+  const homeThemeOptions = themeOptionsForSlot(appearance.appearanceMode === 'fixed' ? 'any' : activeSystemSlot ?? 'light');
   const { config, updateConfig } = useConfigStore();
   const { sessions, setActiveSession } = useSessionStore();
   const navigateToSessions = useNavigationStore(s => s.navigateToSessions);
@@ -319,11 +320,11 @@ export function HomePage() {
                     <ChevronDown className="w-3 h-3 text-text-tertiary" />
                   </button>
                 }
-                items={THEME_OPTIONS.map((option) => ({
+                items={homeThemeOptions.map((option) => ({
                   id: option.id,
                   label: option.label,
                   description: option.description,
-                  onClick: () => setTheme(option.id),
+                  onClick: () => { void setTheme(option.id).catch((error) => console.error('[HomePage] theme change failed', error)); },
                 }))}
                 selectedId={theme}
                 position="bottom-right"

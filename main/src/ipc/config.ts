@@ -9,6 +9,8 @@ import { ShellDetector } from '../utils/shellDetector';
 import { syncAutoStartOnBoot } from '../utils/autoStart';
 import { ensureProjectAgentContext } from '../services/agentContextManager';
 import { boundary, decodeBoundary } from '../../../shared/validation/boundaryDecoder';
+import { AppearanceValidationError, normalizeAppearance } from '../../../shared/types/appearance';
+import { applyNativeThemeSource } from '../services/appearanceService';
 
 export function registerConfigHandlers(
   ipcMain: IpcMain,
@@ -57,6 +59,13 @@ export function registerConfigHandlers(
         && updates.agentContext.managedAgentsMd !== oldConfig.agentContext?.managedAgentsMd;
 
       const updatedConfig = await configManager.updateConfig(updates);
+
+      if (
+        updates.appearanceMode !== undefined || updates.theme !== undefined
+        || updates.systemLightTheme !== undefined || updates.systemDarkTheme !== undefined
+      ) {
+        applyNativeThemeSource(normalizeAppearance(configManager.getConfig()).appearance);
+      }
 
       if (updates.autoStartOnBoot !== undefined) {
         syncAutoStartOnBoot(app, updates.autoStartOnBoot !== false);
@@ -108,6 +117,9 @@ export function registerConfigHandlers(
       return { success: true, data: updatedConfig };
     } catch (error) {
       console.error('Failed to update config:', error);
+      if (error instanceof AppearanceValidationError) {
+        return { success: false, error: error.message };
+      }
       return { success: false, error: 'Failed to update config' };
     }
   });

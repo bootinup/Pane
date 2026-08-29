@@ -4,6 +4,7 @@ import type { RemoteDaemonConfig } from '../../../shared/types/remoteDaemon';
 import type { PaneChatAgent } from '../../../shared/types/paneChat';
 import type { VoiceTranscriptionMode } from '../../../shared/types/voiceTranscription';
 import type { WorktreeFileSyncEntry } from '../../../shared/types/worktreeFileSync';
+import type { AppearanceMode, DarkTheme, LightTheme, Theme } from '../../../shared/types/appearance';
 
 interface TerminalShortcut {
   id: string;
@@ -68,7 +69,10 @@ export interface AppConfig {
   stravuApiKey?: string;
   stravuServerUrl?: string;
   // Theme preference
-  theme?: 'light' | 'light-rounded' | 'dark' | 'oled' | 'dusk' | 'dusk-oled' | 'forge' | 'ember' | 'aurora' | 'night-owl' | 'night-owl-oled' | 'terracotta' | 'synthwave' | 'acid' | 'tokyo-rain' | 'folio' | 'newsprint' | 'walnut' | 'amber-crt' | 'teletype' | 'dot-matrix' | 'haar' | 'abyss' | 'understory' | 'colorblind-safe' | 'low-fatigue' | 'high-legibility';
+  appearanceMode?: AppearanceMode;
+  theme?: Theme;
+  systemLightTheme?: LightTheme;
+  systemDarkTheme?: DarkTheme;
   // Opt-in high contrast mode: raises muted chrome text to AAA and the terminal's
   // minimumContrastRatio so dim CLI output stays legible
   highContrast?: boolean;
@@ -172,7 +176,10 @@ export interface UpdateConfigRequest {
   keepAwakeWhileSessionsActive?: boolean;
   stravuApiKey?: string;
   stravuServerUrl?: string;
-  theme?: 'light' | 'light-rounded' | 'dark' | 'oled' | 'dusk' | 'dusk-oled' | 'forge' | 'ember' | 'aurora' | 'night-owl' | 'night-owl-oled' | 'terracotta' | 'synthwave' | 'acid' | 'tokyo-rain' | 'folio' | 'newsprint' | 'walnut' | 'amber-crt' | 'teletype' | 'dot-matrix' | 'haar' | 'abyss' | 'understory' | 'colorblind-safe' | 'low-fatigue' | 'high-legibility';
+  appearanceMode?: AppearanceMode;
+  theme?: Theme;
+  systemLightTheme?: LightTheme;
+  systemDarkTheme?: DarkTheme;
   highContrast?: boolean;
   uiScale?: number;
   notifications?: {
