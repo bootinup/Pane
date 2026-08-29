@@ -79,7 +79,7 @@ export function DetailPanel({
   const detailScrollSurfaceRef = useScrollSurface<HTMLDivElement>({
     id: `detail:${sessionContext?.session.id ?? 'unavailable'}`,
     sessionId: sessionContext?.session.id,
-    enabled: Boolean(sessionContext && isVisible && !immersiveMode && orientation !== 'horizontal'),
+    enabled: Boolean(sessionContext && bodyActive && isVisible && !immersiveMode && orientation !== 'horizontal'),
     priority: 30,
     ownerElement: () => detailPanelRef.current,
   });

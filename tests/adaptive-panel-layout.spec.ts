@@ -59,7 +59,11 @@ const panels = [
   panel(mainRepoSession.id, 'adaptive-main-files', 'explorer', 1, true),
 ];
 
-async function installFixture(page: Page, storage: Record<string, string> = {}): Promise<void> {
+async function installFixture(
+  page: Page,
+  storage: Record<string, string> = {},
+  fixturePanels = panels,
+): Promise<void> {
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.addInitScript((values: Record<string, string>) => {
     for (const [key, value] of Object.entries(values)) localStorage.setItem(key, value);
@@ -67,7 +71,7 @@ async function installFixture(page: Page, storage: Record<string, string> = {}):
   await installElectronApiMock(page, {
     initialProjects: [project],
     initialSessions: [worktreeSession, mainRepoSession],
-    initialPanels: panels,
+    initialPanels: fixturePanels,
     activeProjectId: project.id,
   });
   await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
@@ -107,7 +111,26 @@ test('all worktree surfaces use container bounds, accessible resizing, and durab
   const resizedInspectorWidth = Number.parseInt(await inspector.evaluate(element => getComputedStyle(element).width), 10);
   expect(resizedInspectorWidth).toBeGreaterThan(410);
 
+  const releaseStart = await inspectorSeparator.boundingBox();
+  const widthBeforeReleaseTest = Number.parseInt(await inspector.evaluate(element => getComputedStyle(element).width), 10);
+  const releaseStartX = releaseStart!.x + releaseStart!.width / 2;
+  await page.mouse.move(releaseStartX, releaseStart!.y + 80);
+  await page.mouse.down();
+  await page.mouse.move(releaseStartX - 10, releaseStart!.y + 80);
+  await inspectorSeparator.dispatchEvent('pointerup', {
+    pointerId: 1,
+    clientX: releaseStartX - 35,
+    clientY: releaseStart!.y + 80,
+  });
+  await page.mouse.up();
+  await expect(inspector).toHaveCSS('width', `${widthBeforeReleaseTest + 35}px`);
+  await expect.poll(() => page.evaluate(() => {
+    const stored = localStorage.getItem('pane-detail-panel-width:v2');
+    return stored ? Number(JSON.parse(stored).preferredPx) : 0;
+  })).toBe(widthBeforeReleaseTest + 35);
+
   const committedInspector = await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'));
+  const resizedInspectorWidthAfterRelease = widthBeforeReleaseTest + 35;
   const noOpStart = await inspectorSeparator.boundingBox();
   await page.mouse.click(noOpStart!.x + noOpStart!.width / 2, noOpStart!.y + 120);
   expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(committedInspector);
@@ -117,7 +140,7 @@ test('all worktree surfaces use container bounds, accessible resizing, and durab
   await page.mouse.move(noOpStart!.x - 40, noOpStart!.y + 140);
   await inspectorSeparator.dispatchEvent('pointercancel', { pointerId: 1, clientX: noOpStart!.x - 40, clientY: noOpStart!.y + 140 });
   await page.mouse.up();
-  await expect(inspector).toHaveCSS('width', `${resizedInspectorWidth}px`);
+  await expect(inspector).toHaveCSS('width', `${resizedInspectorWidthAfterRelease}px`);
   expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(committedInspector);
 
   const lostCaptureStart = await inspectorSeparator.boundingBox();
@@ -128,7 +151,7 @@ test('all worktree surfaces use container bounds, accessible resizing, and durab
     if (element.hasPointerCapture(1)) element.releasePointerCapture(1);
   });
   await page.mouse.up();
-  await expect(inspector).toHaveCSS('width', `${resizedInspectorWidth}px`);
+  await expect(inspector).toHaveCSS('width', `${resizedInspectorWidthAfterRelease}px`);
   expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(committedInspector);
 
   const center = page.locator('.pane-center-column');
@@ -165,7 +188,7 @@ test('all worktree surfaces use container bounds, accessible resizing, and durab
   await expect(inspectorSeparator).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(preferredBeforeConstraint);
   await page.locator('.pane-session-content').evaluate(element => element.removeAttribute('style'));
-  await expect(inspector).toHaveCSS('width', `${resizedInspectorWidth}px`);
+  await expect(inspector).toHaveCSS('width', `${resizedInspectorWidthAfterRelease}px`);
 
   await page.getByRole('button', { name: 'Swap terminal and detail panel positions', exact: true }).click();
   const rightTerminalSeparator = page.getByRole('separator', { name: 'Resize terminal' });
@@ -181,15 +204,44 @@ test('all worktree surfaces use container bounds, accessible resizing, and durab
   await center.evaluate(element => element.setAttribute('style', 'flex: 0 0 220px; height: 220px'));
   await expect(horizontalDetail).toHaveCSS('height', '32px');
   await expect(bottomDetailSeparator).toHaveCount(0);
+  const horizontalDetailInner = horizontalDetail.locator('.pane-detail-panel-inner');
+  await expect(horizontalDetailInner).toHaveAttribute('inert', '');
+  await expect(horizontalDetailInner).toHaveAttribute('aria-hidden', 'true');
+  await expect(horizontalDetail.locator('button[aria-label="Collapse detail panel"]')).toBeVisible();
+  await expect(horizontalDetail.getByRole('button', { name: 'Collapse detail panel' })).toHaveCount(0);
+  await horizontalDetail.locator('button[aria-label="Collapse detail panel"]').focus();
+  await expect(horizontalDetail.locator('button[aria-label="Collapse detail panel"]')).not.toBeFocused();
   await expect(horizontalDetail.getByRole('region', { name: 'Commit history' })).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem('pane-bottom-detail-height:v2'))).toBe(committedBottomDetail);
   await center.evaluate(element => element.removeAttribute('style'));
+  await expect(bottomDetailSeparator).toBeVisible();
+  await horizontalDetail.getByRole('button', { name: 'Collapse detail panel' }).click();
+  expect(await horizontalDetail.evaluate(element => element.style.height)).toBe('auto');
+  expect((await horizontalDetail.boundingBox())!.height).toBeGreaterThanOrEqual(32);
+  await expect(horizontalDetailInner).not.toHaveAttribute('inert', '');
+  await expect(horizontalDetail.getByRole('button', { name: 'Expand detail panel' })).toBeVisible();
+  await horizontalDetail.getByRole('button', { name: 'Expand detail panel' }).click();
   await expect(bottomDetailSeparator).toBeVisible();
 
   const shot = testInfo.outputPath('adaptive-panel-separators.png');
   await page.screenshot({ path: shot });
   await testInfo.attach('adaptive-panel-separators.png', { path: shot, contentType: 'image/png' });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test('persisted swapped layout without a terminal renders an active default inspector', async ({ page }) => {
+  const panelsWithoutWorktreeTerminal = panels.filter(item => item.id !== 'adaptive-dock');
+  await installFixture(page, { 'pane-layout-swapped': 'true' }, panelsWithoutWorktreeTerminal);
+  await openWorktree(page);
+
+  const inspector = page.locator('.pane-detail-panel-vertical');
+  await expect(page.locator('.pane-terminal-rail')).toHaveCount(0);
+  await expect(inspector).toHaveCSS('width', '360px');
+  await expect(inspector.locator('.pane-detail-panel-inner')).not.toHaveAttribute('inert', '');
+  await expect(page.getByRole('separator', { name: 'Resize inspector' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Details' })).toBeVisible();
+  await page.getByRole('button', { name: 'Hide details' }).click();
+  await expect(inspector).toHaveCSS('width', '0px');
 });
 
 test('an observed active terminal resize debounces through the existing xterm refit path', async ({ page }) => {

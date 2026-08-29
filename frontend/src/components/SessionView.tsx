@@ -1411,6 +1411,7 @@ export const SessionView = memo(() => {
   const [layoutSwapped, setLayoutSwapped] = useState(() => {
     return localStorage.getItem('pane-layout-swapped') === 'true';
   });
+  const swappedLayoutRendered = layoutSwapped && Boolean(defaultTerminalPanel);
 
   useEffect(() => {
     localStorage.setItem('pane-layout-swapped', String(layoutSwapped));
@@ -1504,12 +1505,12 @@ export const SessionView = memo(() => {
     if (immersiveMode) {
       return;
     }
-    if (layoutSwapped) {
+    if (swappedLayoutRendered) {
       toggleDetailCollapse();
     } else {
       setDetailVisible(v => !v);
     }
-  }, [immersiveMode, layoutSwapped, toggleDetailCollapse]);
+  }, [immersiveMode, swappedLayoutRendered, toggleDetailCollapse]);
 
   // Terminal collapse state with localStorage persistence (collapsed by default)
   const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(() => {
@@ -1530,22 +1531,22 @@ export const SessionView = memo(() => {
   const detailResize = useOuterPanelResize({
     config: OUTER_PANEL_CONFIGS.worktreeInspector,
     containerPx: sessionContentBox.width,
-    enabled: !layoutSwapped && detailVisible && !immersiveMode,
+    enabled: !swappedLayoutRendered && detailVisible && !immersiveMode,
   });
   const terminalResize = useOuterPanelResize({
     config: OUTER_PANEL_CONFIGS.bottomTerminal,
     containerPx: centerColumnBox.height,
-    enabled: !layoutSwapped && !isTerminalCollapsed && !immersiveMode,
+    enabled: !swappedLayoutRendered && !isTerminalCollapsed && !immersiveMode,
   });
   const rightTerminalResize = useOuterPanelResize({
     config: OUTER_PANEL_CONFIGS.rightTerminal,
     containerPx: sessionContentBox.width,
-    enabled: layoutSwapped && Boolean(defaultTerminalPanel) && !immersiveMode,
+    enabled: swappedLayoutRendered && !immersiveMode,
   });
   const bottomDetailResize = useOuterPanelResize({
     config: OUTER_PANEL_CONFIGS.bottomDetail,
     containerPx: centerColumnBox.height,
-    enabled: layoutSwapped && !isDetailCollapsed && !immersiveMode,
+    enabled: swappedLayoutRendered && !isDetailCollapsed && !immersiveMode,
   });
 
   // Ctrl+`: toggle bottom terminal
@@ -1807,7 +1808,7 @@ export const SessionView = memo(() => {
 
         {/* Content area: center panels + right detail */}
         <div ref={sessionContentBox.ref} className="pane-session-content flex-1 flex flex-row min-h-0 min-w-0">
-          {layoutSwapped && defaultTerminalPanel ? (
+          {swappedLayoutRendered && defaultTerminalPanel ? (
             <>
               {/* SWAPPED LAYOUT: Center column with panels on top, horizontal detail panel on bottom */}
               <div ref={centerColumnBox.ref} className="pane-center-column flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">

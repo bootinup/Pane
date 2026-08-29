@@ -93,16 +93,18 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
   const onPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const transaction = transactionRef.current;
     if (!transaction || transaction.pointerId !== event.pointerId) return;
+    const coordinate = config.axis === 'width' ? event.clientX : event.clientY;
+    const displacement = transaction.startCoordinate - coordinate;
     const { containerPx: latestContainer } = latestRef.current;
     const candidate = resolveOuterPanelSize(
       config,
       latestContainer,
-      transaction.startEffective + transaction.displacement,
+      transaction.startEffective + displacement,
     ).effectivePx;
     const previous = resolveOuterPanelSize(config, latestContainer, transaction.oldPreferred).effectivePx;
     transactionRef.current = null;
     resetDocumentInteraction();
-    if (transaction.displacement !== 0 && candidate > 0 && candidate !== previous) {
+    if (displacement !== 0 && candidate > 0 && candidate !== previous) {
       commitValue(candidate);
     } else {
       setTentativePreferredPx(undefined);

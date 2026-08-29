@@ -88,6 +88,7 @@ export function HorizontalDetailPanel({
   const gitStatus = session.gitStatus;
   const isProject = !!session.isMainRepo;
   const gitUnavailable = isProject && gitStatus?.state === 'unknown';
+  const contentActive = !immersiveMode && (bodyActive || Boolean(isCollapsed));
 
   return (
     <div
@@ -97,7 +98,11 @@ export function HorizontalDetailPanel({
     >
       {resizeSeparator && !immersiveMode && <OuterResizeSeparator {...resizeSeparator} />}
 
-      <div className="pane-detail-panel-inner flex flex-col h-full min-h-0 overflow-hidden">
+      <div
+        className="pane-detail-panel-inner flex flex-col h-full min-h-0 overflow-hidden"
+        aria-hidden={!contentActive}
+        inert={!contentActive ? true : undefined}
+      >
         {onInspectorTabChange && bodyActive && !isCollapsed && (
           <InspectorTabs
             tab={showDetails ? 'details' : inspectorTab}
