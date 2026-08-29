@@ -386,6 +386,22 @@ test('a disappearing separator rolls back tentative intent and restores document
   await page.setViewportSize({ width: 1400, height: 900 });
   await expect(inspector).toHaveCSS('width', '500px');
   expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(preference);
+
+  // A new drag must start from remembered intent, not the abandoned preview:
+  // press without moving, force a re-render via a container change, and the
+  // inspector must still resolve from the stored 500px preference.
+  const previousCap = await separator.getAttribute('aria-valuemax');
+  const restart = await separator.boundingBox();
+  await page.mouse.move(restart!.x + restart!.width / 2, restart!.y + 100);
+  await page.mouse.down();
+  await page.setViewportSize({ width: 1380, height: 900 });
+  // aria-valuemax is derived from the observed container, so a change proves
+  // React re-rendered with the new geometry while the transaction is active.
+  await expect(separator).not.toHaveAttribute('aria-valuemax', previousCap!);
+  expect((await inspector.boundingBox())!.width).toBe(500);
+  await page.mouse.up();
+  await expect(inspector).toHaveCSS('width', '500px');
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(preference);
 });
 
 test('real sidebar and viewport changes clamp without overwriting and restore without overflow', async ({ page }) => {

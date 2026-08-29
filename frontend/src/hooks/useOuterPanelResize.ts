@@ -79,7 +79,10 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
 
   const onPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!policy.separatorVisible) return;
-    rollback();
+    // A new transaction always starts from remembered intent: clear any
+    // abandoned preview left behind when a separator disappeared mid-drag.
+    resetTransaction();
+    setTentativePreferredPx(undefined);
     event.preventDefault();
     event.currentTarget.focus();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -95,7 +98,7 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
     };
     document.body.style.cursor = config.axis === 'width' ? 'col-resize' : 'row-resize';
     document.body.style.userSelect = 'none';
-  }, [config.axis, policy.separatorVisible, preferredPx, rollback, size.effectivePx]);
+  }, [config.axis, policy.separatorVisible, preferredPx, resetTransaction, size.effectivePx]);
 
   const onPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const transaction = transactionRef.current;
