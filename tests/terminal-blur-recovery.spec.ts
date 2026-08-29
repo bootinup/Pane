@@ -131,12 +131,23 @@ async function bootFixture(
   page: Page,
   powerMode: 'performance' | 'batterySaver' = 'performance',
   alternateScreen = false,
+  systemAppearance = false,
 ): Promise<BootFixtureResult> {
+  if (systemAppearance) await page.emulateMedia({ colorScheme: 'light' });
   await page.clock.install();
   await installMaskRecorder(page);
+  const initialConfig = systemAppearance
+    ? {
+        terminalPowerMode: powerMode,
+        appearanceMode: 'system',
+        theme: 'light-rounded',
+        systemLightTheme: 'folio',
+        systemDarkTheme: 'forge',
+      }
+    : { terminalPowerMode: powerMode };
   await installElectronApiMock(page, {
     platform: 'darwin',
-    initialConfig: { terminalPowerMode: powerMode },
+    initialConfig,
     initialProjects: [project],
     initialSessions: [session, otherSession],
     initialPanels: [dockPanel, primaryPanel, secondaryPanel, otherDockPanel, otherPanel],
@@ -371,5 +382,28 @@ test('performance mode accepts output while blurred without a repeated tail', as
   const addedLines = snapshot.lines.filter((line) => line.startsWith('blur-line-'));
   expect(addedLines).toHaveLength(12);
   expect(new Set(addedLines).size).toBe(12);
+  expect(await maskAppearances(page, panel)).toEqual([]);
+});
+
+test('System appearance changes while blurred preserve the scrolled viewport without a mask', async ({ page }) => {
+  const { panel } = await bootFixture(page, 'performance', false, true);
+  await writeLines(panel, 200);
+  await expect.poll(() => readSnapshot(panel).then((snapshot) => snapshot.lines.length)).toBeGreaterThan(200);
+  await scrollUp(panel, 20);
+  const before = await readSnapshot(panel);
+  expect(before.viewportY).toBeLessThan(before.baseY);
+
+  await pauseClock(page);
+  await resetMaskAppearances(page);
+  await emitFocus(page, false);
+  await page.waitForTimeout(50);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveClass(/forge/);
+  await expect.poll(() => readSnapshot(panel).then((snapshot) => snapshot.viewportY)).toBe(before.viewportY);
+
+  await emitFocus(page, true);
+  await advanceActivation(page);
+  const after = await readSnapshot(panel);
+  expect(after.viewportY).toBe(before.viewportY);
   expect(await maskAppearances(page, panel)).toEqual([]);
 });

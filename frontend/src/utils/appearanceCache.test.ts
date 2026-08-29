@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_APPEARANCE } from '../../../shared/types/appearance';
 import { readAppearanceCache, readLegacyThemeAsFixed, writeAppearanceCache, type StorageLike } from './appearanceCache';
 
@@ -18,5 +18,25 @@ describe('appearance cache', () => {
     expect(readAppearanceCache(memoryStorage({ 'pane.appearance.v1': '{' }))).toBeUndefined();
     expect(readLegacyThemeAsFixed(memoryStorage({ theme: 'walnut' }))).toMatchObject({ appearanceMode: 'fixed', theme: 'walnut' });
     expect(readLegacyThemeAsFixed(memoryStorage({ theme: 'invalid' }))).toBeUndefined();
+  });
+
+  it('treats throwing storage reads and writes as best-effort', () => {
+    const storageError = new DOMException('Storage is unavailable', 'SecurityError');
+    const storage: StorageLike = {
+      getItem: () => { throw storageError; },
+      setItem: () => { throw storageError; },
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(readAppearanceCache(storage)).toBeUndefined();
+    expect(readLegacyThemeAsFixed(storage)).toBeUndefined();
+    expect(() => writeAppearanceCache(DEFAULT_APPEARANCE, storage)).not.toThrow();
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn.mock.calls.map(([message]) => message)).toEqual([
+      '[appearanceCache] Failed to read appearance cache:',
+      '[appearanceCache] Failed to read legacy theme:',
+      '[appearanceCache] Failed to write appearance cache:',
+    ]);
+    warn.mockRestore();
   });
 });

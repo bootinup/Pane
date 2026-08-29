@@ -2038,17 +2038,26 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
   }, [activationVisible, panelVisible, useBatterySaverTerminalVisibility, panel.id, isInitialized, autoFocus, handleRefreshTerminal, reconcileMountedTerminal, repaintTerminal, forwardToMainLog]);
 
   useEffect(() => {
-    if (!xtermRef.current) {
-      return;
-    }
+    const terminal = xtermRef.current;
+    if (!terminal) return;
+    const buffer = terminal.buffer.active;
+    const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY);
+    const wasNearBottom = isNearBottomRef.current || distanceFromBottom <= NEAR_BOTTOM_THRESHOLD_ROWS;
     const newTheme = getTerminalTheme();
-    xtermRef.current.options.theme = newTheme;
-    xtermRef.current.options.minimumContrastRatio = getMinimumContrastRatio(highContrast);
-    const rows = xtermRef.current.rows;
+    terminal.options.theme = newTheme;
+    terminal.options.minimumContrastRatio = getMinimumContrastRatio(highContrast);
+    const rows = terminal.rows;
     if (rows > 0) {
-      xtermRef.current.refresh(0, rows - 1);
-      // After refresh, restore scroll to bottom to prevent flicker-to-top
-      xtermRef.current.scrollToBottom();
+      terminal.refresh(0, rows - 1);
+      if (wasNearBottom) {
+        terminal.scrollToBottom();
+        isNearBottomRef.current = true;
+        setShowScrollDown(false);
+      } else {
+        terminal.scrollToLine(Math.max(0, terminal.buffer.active.baseY - distanceFromBottom));
+        isNearBottomRef.current = false;
+        setShowScrollDown(true);
+      }
     }
   }, [theme, highContrast]);
 
