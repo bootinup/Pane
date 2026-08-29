@@ -54,6 +54,8 @@ type ElectronApiMockOptions = {
   fileDiffDelayMs?: Record<string, number>;
   diffManifestErrors?: Record<string, string>;
   fileDiffErrors?: Record<string, string>;
+  testPerf?: boolean;
+  gitCommands?: JsonObject;
   /** Seeded split layout for the session under test (panels:get-layout). */
   initialLayout?: JsonObject | null;
   initialTerminalStates?: Record<string, JsonObject>;
@@ -89,6 +91,8 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
     const pendingPermissions: PanePermissionRequest[] = [];
     const feedbackSubmissions: SubmitFeedbackRequest[] = [];
     const openedExternalUrls: string[] = [];
+    const diffManifestCalls: Array<{ sessionId: string; scope: DiffScope }> = [];
+    const fileDiffCalls: Array<{ sessionId: string; scope: DiffScope; path: string }> = [];
     const clone = <T>(value: T): T => structuredClone(value);
     const scopeMockKey = (scope: DiffScope): string => {
       if (scope.kind === 'commit') return `commit:${scope.hash}`;
@@ -96,6 +100,8 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
       if (scope.kind === 'working-tree-range') return `working-range:${scope.baseHash}`;
       return scope.kind;
     };
+    const requestOption = <Value>(values: Record<string, Value> | undefined, sessionId: string, key: string): Value | undefined =>
+      values?.[`${sessionId}:${key}`] ?? values?.[key];
     interface MockPreferences {
       [key: string]: string;
     }
@@ -262,6 +268,11 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
     const sessionFavoriteToggleCalls: string[] = [];
     const invokeCalls = new Map<string, Array<{ channel: string; args: unknown[] }>>();
     let sessionsGetCount = 0;
+
+    Object.defineProperty(window, '__paneTestPerf', {
+      configurable: true,
+      value: mockOptions.testPerf === true,
+    });
 
     const subscribe = (channel: string, callback: MockEventCallback) => {
       const callbacks = listeners.get(channel) ?? new Set<MockEventCallback>();
@@ -776,14 +787,16 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
         getArchivedWithProjects: () => success([]),
         getResumable: () => success([]),
         getExecutions: () => success(clone(mockOptions.initialExecutions ?? [])),
-        getDiffManifest: async (_sessionId: string, scope: DiffScope) => {
+        getGitCommands: () => success(clone(mockOptions.gitCommands ?? null)),
+        getDiffManifest: async (sessionId: string, scope: DiffScope) => {
           const key = scopeMockKey(scope);
-          const delay = mockOptions.diffManifestDelayMs?.[key] ?? 0;
+          diffManifestCalls.push({ sessionId, scope: clone(scope) });
+          const delay = requestOption(mockOptions.diffManifestDelayMs, sessionId, key) ?? 0;
           if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
-          performance.mark('pane-diff-manifest-received');
-          const failure = mockOptions.diffManifestErrors?.[key];
+          if (mockOptions.testPerf === true) performance.mark('pane-diff-manifest-received');
+          const failure = requestOption(mockOptions.diffManifestErrors, sessionId, key);
           if (failure) return { success: false as const, error: failure };
-          const explicit = mockOptions.diffManifests?.[key];
+          const explicit = requestOption(mockOptions.diffManifests, sessionId, key);
           if (explicit) return success(clone(explicit));
           return success({
             scope,
@@ -793,13 +806,14 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
             stats: { additions: 0, deletions: 0, filesChanged: 0 },
           });
         },
-        getFileDiff: async (_sessionId: string, scope: DiffScope, request: { path: string }) => {
+        getFileDiff: async (sessionId: string, scope: DiffScope, request: { path: string }) => {
           const key = `${scopeMockKey(scope)}:${request.path}`;
-          const delay = mockOptions.fileDiffDelayMs?.[key] ?? 0;
+          fileDiffCalls.push({ sessionId, scope: clone(scope), path: request.path });
+          const delay = requestOption(mockOptions.fileDiffDelayMs, sessionId, key) ?? 0;
           if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
-          const failure = mockOptions.fileDiffErrors?.[key];
+          const failure = requestOption(mockOptions.fileDiffErrors, sessionId, key);
           if (failure) return { success: false as const, error: failure };
-          const explicit = mockOptions.fileDiffs?.[key];
+          const explicit = requestOption(mockOptions.fileDiffs, sessionId, key);
           if (explicit) return success(clone(explicit));
           return success({ file: { path: request.path, kind: 'modified' as const, additions: null, deletions: null, isBinary: false }, patch: '', status: 'no-longer-changed' as const });
         },
@@ -1126,6 +1140,12 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
         },
         getSessionFavoriteToggleCalls() {
           return clone(sessionFavoriteToggleCalls);
+        },
+        getDiffManifestCalls() {
+          return clone(diffManifestCalls);
+        },
+        getFileDiffCalls() {
+          return clone(fileDiffCalls);
         },
       },
     });
