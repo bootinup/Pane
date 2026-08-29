@@ -184,8 +184,8 @@ function waitForNextPaint(): Promise<void> {
  * goes stale while inactive.
  *
  * ACTIVATION (tab shown and window focused — `activationVisible`): initial
- * construction, remounts/session switches, battery saver, sustained-blur
- * recovery, and manual Refresh run the full masked reset+replay from
+ * construction, remounts/session switches, battery saver, and manual Refresh
+ * run the full masked reset+replay from
  * `terminal:getState` (`handleRefreshTerminal`). A narrowly eligible same-
  * session hot activation may instead preserve the continuously updated mounted
  * xterm and perform masked fit/reconcile/refresh. This is intentionally gated:
@@ -193,18 +193,18 @@ function waitForNextPaint(): Promise<void> {
  * (v2.4.11) and keep-alive WebGL contexts with an atlas clear (v2.4.14) —
  * produced ghosted rows and garbage-glyph atlas corruption (xterm terminals
  * with the same font/theme SHARE a texture atlas; clearing it from one terminal
- * poisons the others). A short performance-mode window refocus where WebGL
- * stayed attached takes the light silent `repaintTerminal` path. A sustained
- * blur invalidates hot eligibility and arms full recovery. A delayed backstop
- * re-runs the chosen depth once (REFOCUS_DELAYED_REFRESH_MS).
+ * poisons the others). Performance mode keeps both WebGL and the continuously
+ * fed xterm buffer valid through a window blur of any duration, so refocus takes
+ * the light silent `repaintTerminal` path. A delayed backstop re-runs the chosen
+ * depth once (REFOCUS_DELAYED_REFRESH_MS).
  *
  * WEBGL: one context per VISIBLE terminal. Detached immediately on panel
- * hide, kept through short app blurs, detached after a sustained blur
- * (WEBGL_APP_BLUR_DETACH_DELAY_MS) and arm a full refresh for the next
- * focused activation. Re-attach paints via a refresh deferred past the next
- * frame — same-task refreshes can hit an uncomposited canvas. While detached,
- * xterm falls back to the DOM renderer. Never call `clearTextureAtlas()`
- * here: the atlas is shared across terminals.
+ * hide. Performance mode keeps it attached through app blur; battery saver
+ * detaches it after WEBGL_APP_BLUR_DETACH_DELAY_MS and takes its existing full
+ * recovery because output was gated. Re-attach paints via a refresh deferred
+ * past the next frame — same-task refreshes can hit an uncomposited canvas.
+ * Context loss keeps its existing DOM-renderer fallback. Never call
+ * `clearTextureAtlas()` here: the atlas is shared across terminals.
  *
  * PERSISTENCE: main owns the raw scrollback log plus a headless emulator that
  * renders every PTY byte; the renderer serializes a formatting-preserving
@@ -275,16 +275,15 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
   // refocus in both power modes (effectiveVisible is hard-coded true in
   // performance mode, so it cannot serve this role).
   const activationVisible = panelVisible && windowFocused;
-  // True when the next activation needs the full reset+replay path: the panel
-  // was hidden, a sustained app blur detached WebGL (either renderer swap can
-  // leave stale frames/atlas state that no light repaint can clear — see the
-  // WEBGL lifecycle note), or battery saver gated PTY output while inactive.
+  // True when the next activation needs the full reset+replay path: initial
+  // mount/remount, an ineligible panel hide/show, or battery saver gating PTY
+  // output while inactive. Performance-mode app blur never arms this flag:
+  // both the renderer and buffer remain valid and refocus silently repaints.
   // This full refresh on activation is LOAD-BEARING for paint correctness: two
   // attempts to replace it with a light repaint (v2.4.11) and with keep-alive
   // WebGL contexts (v2.4.14) shipped ghosted rows and texture-atlas corruption.
-  // Do not remove it again without an offline repro of the renderer-swap
-  // artifacts. A short performance-mode refocus leaves both the buffer and
-  // renderer live, so a light repaint is enough there.
+  // Do not remove it from the retained triggers without an offline repro of
+  // the renderer-swap artifacts.
   const needsFullActivationRefreshRef = useRef(true);
   // Fast activation is only safe after this exact mounted xterm has completed a
   // full refresh and has remained on the ungated performance-mode output path.
@@ -563,9 +562,9 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
     return () => clearInterval(refreshTimer);
   }, [effectiveVisible, panel.id, isInitialized]);
 
-  // WebGL policy: detach immediately when the panel hides, keep it attached
-  // through short app blurs, and detach after a sustained app blur while
-  // arming full recovery for the renderer swap on refocus.
+  // WebGL policy: panel hides detach immediately. App blur keeps WebGL attached
+  // in performance mode; battery saver detaches after the delay because its
+  // gated output already requires full recovery on refocus.
   useEffect(() => {
     if (blurDetachTimerRef.current) {
       clearTimeout(blurDetachTimerRef.current);
@@ -590,11 +589,13 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
     }
 
     setWebglAllowed(true);
+    if (!useBatterySaverTerminalVisibility) return;
+
+    // Battery saver retains the delayed resource-saving detach. Its visibility
+    // gate and activation effect already arm full recovery, so do not mutate the
+    // full/hot activation refs here.
     blurDetachTimerRef.current = setTimeout(() => {
       blurDetachTimerRef.current = null;
-      needsFullActivationRefreshRef.current = true;
-      hotActivationEligibleRef.current = false;
-      hotActivationPendingRef.current = false;
       setWebglAllowed(false);
       disposeWebglRenderer('app-blur-timeout');
     }, WEBGL_APP_BLUR_DETACH_DELAY_MS);
@@ -615,6 +616,8 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
     }
 
     let disposed = false;
+    // short-app-blur means the renderer attached while the window was blurred
+    // (for example, mount or context-loss recovery), not that blur is time-limited.
     void loadWebglRenderer(xtermRef.current, () => disposed, windowFocused ? 'visible' : 'short-app-blur');
     return () => {
       disposed = true;
@@ -726,8 +729,8 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
   // normal-buffer TUIs (Claude Code) re-render their transcript tail — when
   // that content overflows the viewport the re-render scrolls, appending a
   // duplicate copy to scrollback on every activation. Runs on initial
-  // construction, remount/session switch, battery-saver activation,
-  // sustained-blur recovery, and manual Refresh. Eligible same-session hot
+  // construction, remount/session switch, battery-saver activation, and manual
+  // Refresh. Eligible same-session hot
   // activations use reconcileMountedTerminal instead and never enter this
   // function.
   const handleRefreshTerminal = useCallback(async () => {
@@ -1914,14 +1917,14 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
   // remounted, output-gated, and recovery activations stay on full reset+replay.
   // A same-session activation can use masked fit/reconcile/refresh only when this
   // exact mounted xterm previously completed the full path and output remained
-  // ungated. Short performance-mode refocus stays a silent repaint. Declared
-  // after WebGL policy effects so the delayed backstop covers re-attach races.
+  // ungated. Performance-mode refocus of any duration stays a silent repaint.
+  // Declared after WebGL policy effects so the delayed backstop covers attach races.
   useLayoutEffect(() => {
     if (!isInitialized || !fitAddonRef.current || !xtermRef.current) return;
     if (!activationVisible) {
-      // Battery saver gates output and sustained blur separately invalidates the
-      // mounted renderer. Panel hides may retain a hot-path candidate captured by
-      // the WebGL policy effect when this exact xterm stayed live.
+      // Battery saver gates output, so refocus must rebuild from main. Panel
+      // hides may retain a hot-path candidate captured by the WebGL policy effect
+      // when this exact xterm stayed live.
       if (useBatterySaverTerminalVisibility) {
         needsFullActivationRefreshRef.current = true;
         hotActivationEligibleRef.current = false;
@@ -1974,6 +1977,9 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
 
       void document.fonts.ready.then(async () => {
         if (cancelled || !fitAddonRef.current || !xtermRef.current) return;
+
+        const depth = fullRefresh ? 'full' : hotActivation ? 'hot' : 'light';
+        forwardToMainLog('info', `[TerminalPanel] Activation depth for panel ${panel.id}: ${depth}`);
 
         if (fullRefresh) {
           // Consume the flag only when the full refresh actually executes, so a
@@ -2142,7 +2148,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
       )}
 
       {overlayVisible && (
-        <div className="absolute inset-0 bg-surface-primary z-10">
+        <div className="absolute inset-0 bg-surface-primary z-10" data-testid="terminal-activation-mask">
           <TerminalLoadingSkeleton />
         </div>
       )}

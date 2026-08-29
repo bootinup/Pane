@@ -25,6 +25,7 @@ type ElectronApiMockOptions = {
   analyticsConsentShown?: boolean;
   analyticsIdentity?: JsonObject;
   initialConfig?: JsonObject;
+  initialWindowFocused?: boolean;
   initialPreferences?: Record<string, string>;
   platform?: 'darwin' | 'linux' | 'win32';
   /** Whether main handed the title bar to the page (Window Controls Overlay). */
@@ -246,6 +247,7 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
     const preferenceWrites: Array<{ key: string; value: string }> = [];
     const sessionDeleteCalls: string[] = [];
     const sessionFavoriteToggleCalls: string[] = [];
+    const invokeCalls = new Map<string, Array<{ channel: string; args: unknown[] }>>();
     let sessionsGetCount = 0;
 
     const subscribe = (channel: string, callback: MockEventCallback) => {
@@ -315,6 +317,9 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
         if (prop === 'onNativeAppearanceUpdated') {
           return (callback: MockEventCallback) => subscribe('window:appearance-native-updated', callback);
         }
+        if (prop === 'onWindowFocusChanged') {
+          return (callback: MockEventCallback) => subscribe('window:focus-changed', callback);
+        }
         if (prop === 'onSessionUpdated') {
           return (callback: MockEventCallback) => subscribe('session:updated', callback);
         }
@@ -325,7 +330,14 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
       },
     });
 
-    const invoke = (channel: string, key?: string, value?: string) => {
+    const invoke = (channel: string, ...args: unknown[]) => {
+      const calls = invokeCalls.get(channel) ?? [];
+      calls.push({ channel, args });
+      if (calls.length > 500) calls.shift();
+      invokeCalls.set(channel, calls);
+
+      const key = args[0] === undefined ? undefined : String(args[0]);
+      const value = args[1] === undefined ? undefined : String(args[1]);
       if (channel === 'panels:get-layout') {
         return success(clone(mockOptions.initialLayout ?? null));
       }
@@ -368,7 +380,7 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
       invoke,
       events,
       window: {
-        isFocused: () => Promise.resolve(true),
+        isFocused: () => Promise.resolve(mockOptions.initialWindowFocused !== false),
       },
       getPlatform: () => Promise.resolve(mockOptions.platform ?? 'linux'),
       windowControlsOverlayEnabled: mockOptions.windowControlsOverlayEnabled === true,
@@ -987,8 +999,17 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
         getTitleBarOverlayWrites() {
           return clone(titleBarOverlayWrites);
         },
+        getInvokeCalls(channel: string) {
+          return clone(invokeCalls.get(channel) ?? []);
+        },
+        getConsoleLogCalls() {
+          return clone((invokeCalls.get('console:log') ?? []).map((call) => call.args[0]));
+        },
         emitNativeAppearanceUpdated(prefersDark: boolean) {
           emit('window:appearance-native-updated', { prefersDark });
+        },
+        emitWindowFocusChanged(focused: boolean) {
+          emit('window:focus-changed', focused);
         },
         getListenerCount(channel: string) {
           return listeners.get(channel)?.size ?? 0;
