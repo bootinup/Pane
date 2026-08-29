@@ -1538,6 +1538,13 @@ export const SessionView = memo(() => {
     containerPx: centerColumnBox.height,
     enabled: !swappedLayoutRendered && !isTerminalCollapsed && !immersiveMode,
   });
+  const terminalDockHeight = immersiveMode
+    ? terminalResize.renderedPx
+    : isTerminalCollapsed
+      ? Math.min(32, centerColumnBox.height)
+      : terminalResize.renderedPx;
+  // A zero-height dock is invisible: its chrome must not stay reachable.
+  const terminalDockContentActive = terminalDockHeight > 0;
   const rightTerminalResize = useOuterPanelResize({
     config: OUTER_PANEL_CONFIGS.rightTerminal,
     containerPx: sessionContentBox.width,
@@ -1906,13 +1913,7 @@ export const SessionView = memo(() => {
                         ? 'border-t border-border-primary'
                         : ''
                     }`}
-                    style={{
-                      height: `${immersiveMode
-                        ? terminalResize.renderedPx
-                        : isTerminalCollapsed
-                          ? Math.min(32, centerColumnBox.height)
-                          : terminalResize.renderedPx}px`,
-                    }}
+                    style={{ height: `${terminalDockHeight}px` }}
                   >
                     {terminalResize.separatorVisible && (
                       <OuterResizeSeparator
@@ -1924,7 +1925,11 @@ export const SessionView = memo(() => {
                         {...terminalResize.separatorHandlers}
                       />
                     )}
-                    <div className="pane-terminal-dock-content flex flex-col h-full min-h-0 overflow-hidden">
+                    <div
+                      className="pane-terminal-dock-content flex flex-col h-full min-h-0 overflow-hidden"
+                      aria-hidden={!terminalDockContentActive}
+                      inert={!terminalDockContentActive ? true : undefined}
+                    >
                       {/* Terminal tab header with collapse toggle and pill shortcuts */}
                       <div className="pane-terminal-shell-header flex items-center h-8 px-3 bg-surface-primary border-b border-border-primary gap-2 flex-shrink-0">
                         {/* Left: chevron + icon + label */}

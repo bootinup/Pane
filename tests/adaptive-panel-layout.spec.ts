@@ -355,6 +355,65 @@ test('zero-height collapsed detail is inert until observed height returns', asyn
   await expect(expandButton).toBeFocused();
 });
 
+test('zero-height collapsed terminal chrome is inert until observed height returns', async ({ page }) => {
+  await installFixture(page, { 'pane-terminal-collapsed': 'true' });
+  await openWorktree(page);
+
+  const center = page.locator('.pane-center-column');
+  const dock = page.locator('.pane-terminal-dock');
+  const dockContent = dock.locator('.pane-terminal-dock-content');
+  const expandButton = dock.locator('button[aria-label="Expand terminal"]');
+
+  await expect(dock).toHaveCSS('height', '32px');
+  await expect(dockContent).not.toHaveAttribute('inert', '');
+  await expandButton.focus();
+  await expect(expandButton).toBeFocused();
+
+  await center.evaluate(element => {
+    element.setAttribute('style', 'flex: 0 0 260px; width: 260px; height: 0; align-self: flex-start');
+  });
+  // border-box keeps the 1px top border, but the content box is zero.
+  await expect.poll(async () => (await dockContent.boundingBox())!.height).toBe(0);
+  await expect(dockContent).toHaveAttribute('inert', '');
+  await expect(dockContent).toHaveAttribute('aria-hidden', 'true');
+  await expect(dock.getByRole('button', { name: 'Expand terminal' })).toHaveCount(0);
+  await expect(expandButton).not.toBeFocused();
+
+  await center.evaluate(element => element.removeAttribute('style'));
+  await expect(dock).toHaveCSS('height', '32px');
+  await expect(dockContent).not.toHaveAttribute('inert', '');
+  await expect(dockContent).toHaveAttribute('aria-hidden', 'false');
+  await expandButton.focus();
+  await expect(expandButton).toBeFocused();
+});
+
+test('a second pointer cannot restart an active drag from its preview', async ({ page }) => {
+  const preference = '{"version":2,"preferredPx":500}';
+  await installFixture(page, { 'pane-detail-panel-width:v2': preference });
+  await openWorktree(page);
+
+  const inspector = page.locator('.pane-detail-panel-vertical');
+  const separator = page.getByRole('separator', { name: 'Resize inspector' });
+  await expect(inspector).toHaveCSS('width', '500px');
+  const start = await separator.boundingBox();
+  await page.mouse.move(start!.x + start!.width / 2, start!.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(start!.x - 40, start!.y + 100);
+  await expect.poll(async () => (await inspector.boundingBox())!.width).toBeGreaterThan(500);
+  const preview = (await inspector.boundingBox())!.width;
+
+  await separator.evaluate((element, x) => {
+    const init = { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', isPrimary: false };
+    element.dispatchEvent(new PointerEvent('pointerdown', { ...init, clientX: x, clientY: 200 }));
+    element.dispatchEvent(new PointerEvent('pointermove', { ...init, clientX: x - 1, clientY: 200 }));
+  }, start!.x - 40);
+  await expect(inspector).toHaveCSS('width', `${preview}px`);
+
+  await page.mouse.up();
+  await expect(inspector).toHaveCSS('width', `${preview}px`);
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(`{"version":2,"preferredPx":${preview}}`);
+});
+
 test('a disappearing separator rolls back tentative intent and restores document interaction state', async ({ page }) => {
   const preference = '{"version":2,"preferredPx":500}';
   await installFixture(page, { 'pane-detail-panel-width:v2': preference });
