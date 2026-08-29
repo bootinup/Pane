@@ -7,6 +7,7 @@ type AppearanceMock = {
   getBackgroundColorWrites: () => Array<{ theme: string; color: string }>;
   getTitleBarOverlayWrites: () => Array<{ color: string; symbolColor: string }>;
   getConfig: () => AppearanceConfig;
+  failNextBackgroundColorWrite: (error: string) => void;
 };
 
 const readBootstrapThemeClasses = (page: import('@playwright/test').Page) => page.evaluate(() => {
@@ -92,6 +93,42 @@ test('System follows live changes and refreshes native window colors while Fixed
     // SAFETY: installElectronApiMock defines this test-only bridge before the page loads.
     return (window as typeof window & { __paneTestElectronMock: AppearanceMock }).__paneTestElectronMock.getTitleBarOverlayWrites().length;
   })).toBeGreaterThan(1);
+});
+
+test('fulfilled background-colour failures are logged without interrupting System updates', async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await installElectronApiMock(page, {
+    initialConfig: {
+      appearanceMode: 'system', theme: 'walnut', systemLightTheme: 'folio', systemDarkTheme: 'forge',
+    },
+  });
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveClass(/folio/);
+  await expect.poll(() => page.evaluate(() => {
+    // SAFETY: installElectronApiMock defines this test-only bridge before the page loads.
+    return (window as typeof window & { __paneTestElectronMock: AppearanceMock }).__paneTestElectronMock.getBackgroundColorWrites().at(-1)?.theme;
+  })).toBe('folio');
+
+  await page.evaluate(() => {
+    // SAFETY: installElectronApiMock defines this test-only bridge before the page loads.
+    (window as typeof window & { __paneTestElectronMock: AppearanceMock }).__paneTestElectronMock.failNextBackgroundColorWrite('native background failed');
+  });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveClass(/forge/);
+  await expect.poll(() => consoleErrors.some((message) =>
+    message.includes('Failed to apply window background colour:') && message.includes('native background failed')
+  )).toBe(true);
+
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(page.locator('html')).toHaveClass(/folio/);
+  await expect.poll(() => page.evaluate(() => {
+    // SAFETY: A successful write after the injected failure proves the bridge remains operational.
+    return (window as typeof window & { __paneTestElectronMock: AppearanceMock }).__paneTestElectronMock.getBackgroundColorWrites().at(-1)?.theme;
+  })).toBe('folio');
 });
 
 test('Fixed appearance ignores live system preference changes', async ({ page }) => {

@@ -240,6 +240,7 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
     let configGetCount = 0;
     let nextConfigUpdateError: string | null = null;
     let nextPreferenceSetError: string | null = null;
+    let nextBackgroundColorWriteError: string | null = null;
     let remainingConfigGetFailures = mockOptions.configGetFailures ?? 0;
     const configUpdates: JsonObject[] = [];
     const backgroundColorWrites: Array<{ theme: string; color: string }> = [];
@@ -391,6 +392,11 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
       },
       setBackgroundColor: (payload: { theme: string; color: string }) => {
         backgroundColorWrites.push(clone(payload));
+        if (nextBackgroundColorWriteError) {
+          const error = nextBackgroundColorWriteError;
+          nextBackgroundColorWriteError = null;
+          return Promise.resolve({ success: false, error });
+        }
         return success();
       },
       getVersionInfo: () => success({
@@ -1028,6 +1034,9 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
         },
         failNextPreferenceSet(error: string) {
           nextPreferenceSetError = error;
+        },
+        failNextBackgroundColorWrite(error: string) {
+          nextBackgroundColorWriteError = error;
         },
         setConfigGetFailures(count: number) {
           remainingConfigGetFailures = count;

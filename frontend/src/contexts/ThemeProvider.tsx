@@ -103,18 +103,30 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     const color = readThemeTokenHex('--color-bg-primary');
     if (!color) return;
-    void window.electronAPI?.setBackgroundColor({ theme: resolvedTheme, color }).catch((error) => {
-      console.error('Failed to apply window background color:', error);
-    });
+    void window.electronAPI?.setBackgroundColor({ theme: resolvedTheme, color })
+      .then((response) => {
+        if (!response.success) {
+          console.error('Failed to apply window background colour:', response.error);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to apply window background colour:', error);
+      });
   }, [resolvedTheme, highContrast]);
 
   useEffect(() => {
     if (!isWindowControlsOverlayEnabled()) return;
     const colors = readTitleBarOverlayColors();
     if (!colors) return;
-    void window.electronAPI?.setTitleBarOverlay(colors).catch((error) => {
-      console.error('Failed to apply title bar overlay colors:', error);
-    });
+    void window.electronAPI?.setTitleBarOverlay(colors)
+      .then((response) => {
+        if (!response.success) {
+          console.error('Failed to apply title bar overlay colors:', response.error);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to apply title bar overlay colors:', error);
+      });
   }, [resolvedTheme, highContrast]);
 
   const setAppearance = useCallback(async (patch: Partial<AppearanceConfig>): Promise<void> => {
