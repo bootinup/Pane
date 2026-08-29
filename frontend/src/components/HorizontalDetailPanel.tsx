@@ -14,6 +14,7 @@ import { OuterResizeSeparator, type OuterResizeSeparatorProps } from './ui/Outer
 
 interface HorizontalDetailPanelProps {
   height?: number;
+  availableHeight?: number;
   resizeSeparator?: OuterResizeSeparatorProps;
   bodyActive?: boolean;
   mergeError?: string | null;
@@ -32,6 +33,7 @@ interface HorizontalDetailPanelProps {
 
 export function HorizontalDetailPanel({
   height,
+  availableHeight,
   resizeSeparator,
   bodyActive = true,
   mergeError,
@@ -94,7 +96,14 @@ export function HorizontalDetailPanel({
     <div
       ref={detailPanelRef}
       className={`pane-detail-panel pane-detail-panel-horizontal flex-shrink-0 bg-surface-primary flex flex-col overflow-visible relative ${immersiveMode ? '' : 'border-t border-border-primary'}`}
-      style={{ height: immersiveMode ? '0px' : isCollapsed ? 'auto' : `${height ?? 200}px` }}
+      style={immersiveMode
+        ? { height: '0px' }
+        : isCollapsed
+          ? {
+              height: 'auto',
+              maxHeight: availableHeight === undefined ? undefined : `${Math.max(0, Math.floor(availableHeight))}px`,
+            }
+          : { height: `${height ?? 200}px` }}
     >
       {resizeSeparator && !immersiveMode && <OuterResizeSeparator {...resizeSeparator} />}
 

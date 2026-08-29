@@ -1823,6 +1823,7 @@ export const SessionView = memo(() => {
                   onToggle={toggleDetailCollapse}
                   width={0}
                   height={bottomDetailResize.effectivePx}
+                  availableHeight={centerColumnBox.height}
                   bodyActive={bottomDetailResize.bodyActive}
                   resizeSeparator={bottomDetailResize.separatorVisible ? {
                     label: 'Resize detail panel',
@@ -1862,26 +1863,28 @@ export const SessionView = memo(() => {
                     {...rightTerminalResize.separatorHandlers}
                   />
                 )}
-                <div
-                  className="pane-terminal-rail-shell bg-surface-primary flex flex-col h-full relative overflow-hidden"
-                  style={{ width: `${rightTerminalResize.effectivePx}px` }}
-                  aria-hidden={!rightTerminalResize.bodyActive}
-                  inert={!rightTerminalResize.bodyActive ? true : undefined}
-                >
-                  {/* Terminal header */}
-                  <div className="pane-terminal-shell-header flex items-center h-8 px-3 bg-surface-primary border-b border-border-primary gap-2">
-                    <Terminal className="w-3.5 h-3.5 text-text-tertiary" />
-                    <span className="text-[11px] font-medium text-text-secondary uppercase tracking-wider">Terminal</span>
-                  </div>
+                <div className="pane-terminal-rail-clip h-full overflow-hidden">
+                  <div
+                    className="pane-terminal-rail-shell bg-surface-primary flex flex-col h-full relative overflow-hidden"
+                    style={{ width: `${rightTerminalResize.effectivePx}px` }}
+                    aria-hidden={!rightTerminalResize.bodyActive}
+                    inert={!rightTerminalResize.bodyActive ? true : undefined}
+                  >
+                    {/* Terminal header */}
+                    <div className="pane-terminal-shell-header flex items-center h-8 px-3 bg-surface-primary border-b border-border-primary gap-2">
+                      <Terminal className="w-3.5 h-3.5 text-text-tertiary" />
+                      <span className="text-[11px] font-medium text-text-secondary uppercase tracking-wider">Terminal</span>
+                    </div>
 
-                  {/* Terminal content - full height */}
-                  <div className="pane-terminal-shell-body flex-1 relative min-h-0 pb-1">
-                    <PanelContainer
-                      panel={defaultTerminalPanel}
-                      isActive={rightTerminalResize.bodyActive}
-                      autoFocus={false}
-                      isMainRepo={!!activeSession.isMainRepo}
-                    />
+                    {/* Terminal content - full height */}
+                    <div className="pane-terminal-shell-body flex-1 relative min-h-0 pb-1">
+                      <PanelContainer
+                        panel={defaultTerminalPanel}
+                        isActive={rightTerminalResize.bodyActive}
+                        autoFocus={false}
+                        isMainRepo={!!activeSession.isMainRepo}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1898,8 +1901,18 @@ export const SessionView = memo(() => {
                 {/* Bottom: persistent terminal (collapsible) */}
                 {defaultTerminalPanel && (
                   <div
-                    className="pane-terminal-dock flex-shrink-0 border-t border-border-primary flex flex-col relative overflow-visible"
-                    style={{ height: `${isTerminalCollapsed ? Math.min(32, centerColumnBox.height) : terminalResize.effectivePx}px` }}
+                    className={`pane-terminal-dock flex-shrink-0 flex flex-col relative overflow-visible ${
+                      !immersiveMode && (isTerminalCollapsed || terminalResize.renderedPx > 0)
+                        ? 'border-t border-border-primary'
+                        : ''
+                    }`}
+                    style={{
+                      height: `${immersiveMode
+                        ? terminalResize.renderedPx
+                        : isTerminalCollapsed
+                          ? Math.min(32, centerColumnBox.height)
+                          : terminalResize.renderedPx}px`,
+                    }}
                   >
                     {terminalResize.separatorVisible && (
                       <OuterResizeSeparator

@@ -19,6 +19,7 @@ interface DetailPanelProps {
   onToggle: () => void;
   width: number;
   height?: number;
+  availableHeight?: number;
   resizeSeparator?: OuterResizeSeparatorProps;
   bodyActive?: boolean;
   mergeError?: string | null;
@@ -57,6 +58,7 @@ export function DetailPanel({
   isVisible,
   width,
   height,
+  availableHeight,
   resizeSeparator,
   bodyActive = true,
   mergeError,
@@ -102,6 +104,7 @@ export function DetailPanel({
     return (
       <HorizontalDetailPanel
         height={height}
+        availableHeight={availableHeight}
         resizeSeparator={resizeSeparator}
         bodyActive={bodyActive}
         mergeError={mergeError}

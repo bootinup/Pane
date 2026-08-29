@@ -17,7 +17,6 @@ export interface OuterPanelSize extends OuterPanelBounds {
 }
 
 export interface OuterPanelConfig {
-  surface: OuterPanelSurface;
   axis: 'width' | 'height';
   storageKey: string;
   legacyKey: string;
@@ -44,7 +43,6 @@ const bottomBounds = (maximum: number | undefined, minimum: number) => (containe
 
 export const OUTER_PANEL_CONFIGS = {
   worktreeInspector: {
-    surface: 'worktreeInspector',
     axis: 'width',
     storageKey: 'pane-detail-panel-width:v2',
     legacyKey: 'pane-detail-panel-width',
@@ -55,7 +53,6 @@ export const OUTER_PANEL_CONFIGS = {
     bounds: widthBounds(720, 240),
   },
   projectInspector: {
-    surface: 'projectInspector',
     axis: 'width',
     storageKey: 'pane-project-detail-panel-width:v2',
     legacyKey: 'pane-project-detail-panel-width',
@@ -66,7 +63,6 @@ export const OUTER_PANEL_CONFIGS = {
     bounds: widthBounds(720, 240),
   },
   bottomTerminal: {
-    surface: 'bottomTerminal',
     axis: 'height',
     storageKey: 'pane-bottom-terminal-height:v2',
     legacyKey: 'pane-bottom-terminal-height',
@@ -77,7 +73,6 @@ export const OUTER_PANEL_CONFIGS = {
     bounds: bottomBounds(undefined, 100),
   },
   rightTerminal: {
-    surface: 'rightTerminal',
     axis: 'width',
     storageKey: 'pane-right-terminal-width:v2',
     legacyKey: 'pane-right-terminal-width',
@@ -88,7 +83,6 @@ export const OUTER_PANEL_CONFIGS = {
     bounds: widthBounds(600, 200),
   },
   bottomDetail: {
-    surface: 'bottomDetail',
     axis: 'height',
     storageKey: 'pane-bottom-detail-height:v2',
     legacyKey: 'pane-bottom-detail-height',

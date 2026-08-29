@@ -16,10 +16,12 @@ interface UseOuterPanelResizeOptions {
 
 interface PointerTransaction {
   pointerId: number;
+  target: HTMLDivElement;
   startCoordinate: number;
   startEffective: number;
   oldPreferred: number | undefined;
-  displacement: number;
+  previousCursor: string;
+  previousUserSelect: string;
 }
 
 export interface OuterResizeSeparatorHandlers {
@@ -42,19 +44,27 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
     [config, containerPx, preferredPx, tentativePreferredPx],
   );
   const policy = useMemo(() => resolveOuterPanelRenderPolicy(config, size, enabled), [config, enabled, size]);
-  const latestRef = useRef({ containerPx, preferredPx, size });
-  latestRef.current = { containerPx, preferredPx, size };
+  const latestContainerPxRef = useRef(containerPx);
+  latestContainerPxRef.current = containerPx;
 
-  const resetDocumentInteraction = useCallback(() => {
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
+  const resetDocumentInteraction = useCallback((transaction: PointerTransaction) => {
+    document.body.style.cursor = transaction.previousCursor;
+    document.body.style.userSelect = transaction.previousUserSelect;
+    try {
+      if (transaction.target.hasPointerCapture(transaction.pointerId)) {
+        transaction.target.releasePointerCapture(transaction.pointerId);
+      }
+    } catch {
+      // The capture target may already be detached when interaction is disabled.
+    }
   }, []);
 
   const rollback = useCallback(() => {
-    if (!transactionRef.current) return;
+    const transaction = transactionRef.current;
+    if (!transaction) return;
     transactionRef.current = null;
     setTentativePreferredPx(undefined);
-    resetDocumentInteraction();
+    resetDocumentInteraction(transaction);
   }, [resetDocumentInteraction]);
 
   const commitValue = useCallback((nextPreferred: number) => {
@@ -66,28 +76,30 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
 
   const onPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!policy.separatorVisible) return;
+    rollback();
     event.preventDefault();
     event.currentTarget.focus();
     event.currentTarget.setPointerCapture(event.pointerId);
     const coordinate = config.axis === 'width' ? event.clientX : event.clientY;
     transactionRef.current = {
       pointerId: event.pointerId,
+      target: event.currentTarget,
       startCoordinate: coordinate,
       startEffective: size.effectivePx,
       oldPreferred: preferredPx,
-      displacement: 0,
+      previousCursor: document.body.style.cursor,
+      previousUserSelect: document.body.style.userSelect,
     };
     document.body.style.cursor = config.axis === 'width' ? 'col-resize' : 'row-resize';
     document.body.style.userSelect = 'none';
-  }, [config.axis, policy.separatorVisible, preferredPx, size.effectivePx]);
+  }, [config.axis, policy.separatorVisible, preferredPx, rollback, size.effectivePx]);
 
   const onPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const transaction = transactionRef.current;
     if (!transaction || transaction.pointerId !== event.pointerId) return;
     event.preventDefault();
     const coordinate = config.axis === 'width' ? event.clientX : event.clientY;
-    transaction.displacement = transaction.startCoordinate - coordinate;
-    setTentativePreferredPx(transaction.startEffective + transaction.displacement);
+    setTentativePreferredPx(transaction.startEffective + transaction.startCoordinate - coordinate);
   }, [config.axis]);
 
   const onPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -95,7 +107,7 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
     if (!transaction || transaction.pointerId !== event.pointerId) return;
     const coordinate = config.axis === 'width' ? event.clientX : event.clientY;
     const displacement = transaction.startCoordinate - coordinate;
-    const { containerPx: latestContainer } = latestRef.current;
+    const latestContainer = latestContainerPxRef.current;
     const candidate = resolveOuterPanelSize(
       config,
       latestContainer,
@@ -103,23 +115,17 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
     ).effectivePx;
     const previous = resolveOuterPanelSize(config, latestContainer, transaction.oldPreferred).effectivePx;
     transactionRef.current = null;
-    resetDocumentInteraction();
+    resetDocumentInteraction(transaction);
     if (displacement !== 0 && candidate > 0 && candidate !== previous) {
       commitValue(candidate);
     } else {
       setTentativePreferredPx(undefined);
-    }
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
     }
   }, [commitValue, config, resetDocumentInteraction]);
 
   const onPointerCancel = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (transactionRef.current?.pointerId !== event.pointerId) return;
     rollback();
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
   }, [rollback]);
 
   const onLostPointerCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -130,8 +136,10 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
     if (!policy.separatorVisible) return;
     const step = event.shiftKey ? 50 : 10;
     let next: number | undefined;
-    if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') next = size.effectivePx + step;
-    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') next = size.effectivePx - step;
+    if (config.axis === 'width' && event.key === 'ArrowLeft') next = size.effectivePx + step;
+    if (config.axis === 'width' && event.key === 'ArrowRight') next = size.effectivePx - step;
+    if (config.axis === 'height' && event.key === 'ArrowUp') next = size.effectivePx + step;
+    if (config.axis === 'height' && event.key === 'ArrowDown') next = size.effectivePx - step;
     if (event.key === 'Home') next = size.floor;
     if (event.key === 'End') next = size.cap;
     if (next === undefined) return;
@@ -139,6 +147,10 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
     const resolved = resolveOuterPanelSize(config, containerPx, next).effectivePx;
     if (resolved !== size.effectivePx && resolved > 0) commitValue(resolved);
   }, [commitValue, config, containerPx, policy.separatorVisible, size]);
+
+  useEffect(() => {
+    if (!policy.separatorVisible) rollback();
+  }, [policy.separatorVisible, rollback]);
 
   useEffect(() => rollback, [rollback]);
 

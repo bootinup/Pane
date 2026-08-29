@@ -83,6 +83,19 @@ async function openWorktree(page: Page): Promise<void> {
   await expect(page.locator('.pane-session-content')).toBeVisible();
 }
 
+async function setImmersiveMode(page: Page, immersive: boolean): Promise<void> {
+  await page.evaluate(async (nextImmersive) => {
+    const modulePath = ['/src/stores', 'navigationStore.ts'].join('/');
+    // SAFETY: Vite serves this known application module, whose exported store shape is declared here for the browser callback.
+    const navigationStore = await import(modulePath) as {
+      useNavigationStore: {
+        getState: () => { setImmersiveMode: (value: boolean) => void };
+      };
+    };
+    navigationStore.useNavigationStore.getState().setImmersiveMode(nextImmersive);
+  }, immersive);
+}
+
 test('all worktree surfaces use container bounds, accessible resizing, and durable intent', async ({ page }, testInfo) => {
   await installFixture(page);
   await openWorktree(page);
@@ -98,6 +111,10 @@ test('all worktree surfaces use container bounds, accessible resizing, and durab
   await expect(inspector).toHaveCSS('width', '410px');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2')))
     .toBe('{"version":2,"preferredPx":410}');
+  const widthPreferenceAfterResize = await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'));
+  await page.keyboard.press('ArrowUp');
+  await expect(inspector).toHaveCSS('width', '410px');
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(widthPreferenceAfterResize);
 
   const pointerStart = await inspectorSeparator.boundingBox();
   await page.mouse.move(pointerStart!.x + pointerStart!.width / 2, pointerStart!.y + 100);
@@ -173,6 +190,10 @@ test('all worktree surfaces use container bounds, accessible resizing, and durab
   await page.keyboard.press('ArrowUp');
   const committedTerminal = await page.evaluate(() => localStorage.getItem('pane-bottom-terminal-height:v2'));
   expect(committedTerminal).toMatch(/^\{"version":2,"preferredPx":\d+\}$/);
+  const terminalHeightAfterResize = (await terminalDock.boundingBox())!.height;
+  await page.keyboard.press('ArrowLeft');
+  await expect.poll(async () => (await terminalDock.boundingBox())!.height).toBe(terminalHeightAfterResize);
+  expect(await page.evaluate(() => localStorage.getItem('pane-bottom-terminal-height:v2'))).toBe(committedTerminal);
   const heightBeforeReleaseTest = (await terminalDock.boundingBox())!.height;
   const terminalReleaseStart = await terminalSeparator.boundingBox();
   const terminalReleaseStartY = terminalReleaseStart!.y + terminalReleaseStart!.height / 2;
@@ -238,12 +259,124 @@ test('all worktree surfaces use container bounds, accessible resizing, and durab
   expect((await horizontalDetail.boundingBox())!.height).toBeGreaterThanOrEqual(32);
   await expect(horizontalDetailInner).not.toHaveAttribute('inert', '');
   await expect(horizontalDetail.getByRole('button', { name: 'Expand detail panel' })).toBeVisible();
+
+  await center.evaluate(element => {
+    element.setAttribute('style', 'flex: 0 0 260px; width: 260px; height: 48px; align-self: flex-start');
+  });
+  await expect.poll(async () => (await horizontalDetail.boundingBox())!.height).toBeLessThanOrEqual(48);
+  expect((await horizontalDetail.boundingBox())!.height).toBeGreaterThan(32);
+  await center.evaluate(element => {
+    element.setAttribute('style', 'flex: 0 0 260px; width: 260px; height: 20px; align-self: flex-start');
+  });
+  await expect.poll(async () => (await horizontalDetail.boundingBox())!.height).toBeLessThanOrEqual(20);
+  expect(await page.evaluate(() => localStorage.getItem('pane-bottom-detail-height:v2'))).toBe(committedBottomDetail);
+  await center.evaluate(element => element.removeAttribute('style'));
+
   await horizontalDetail.getByRole('button', { name: 'Expand detail panel' }).click();
   await expect(bottomDetailSeparator).toBeVisible();
 
   const shot = testInfo.outputPath('adaptive-panel-separators.png');
   await page.screenshot({ path: shot });
   await testInfo.attach('adaptive-panel-separators.png', { path: shot, contentType: 'image/png' });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test('render-disabled terminals consume zero geometry and the swapped fixed shell stays clipped', async ({ page }) => {
+  await installFixture(page, {
+    'pane-terminal-collapsed': 'false',
+    'pane-bottom-terminal-height:v2': '{"version":2,"preferredPx":260}',
+    'pane-right-terminal-width:v2': '{"version":2,"preferredPx":430}',
+  });
+  await openWorktree(page);
+
+  const terminalDock = page.locator('.pane-terminal-dock');
+  await expect(terminalDock).toHaveCSS('height', '260px');
+  await setImmersiveMode(page, true);
+  await expect(terminalDock).toHaveCSS('height', '0px');
+  await expect(terminalDock.locator('.pane-terminal-shell-body')).toHaveAttribute('inert', '');
+  await expect(terminalDock.locator('.pane-terminal-shell-body')).toHaveAttribute('aria-hidden', 'true');
+  await expect(page.getByRole('separator', { name: 'Resize terminal' })).toHaveCount(0);
+
+  await setImmersiveMode(page, false);
+  await expect(terminalDock).toHaveCSS('height', '260px');
+  await page.getByRole('button', { name: 'Swap terminal and detail panel positions', exact: true }).click();
+  const terminalRail = page.locator('.pane-terminal-rail');
+  await expect(terminalRail).toHaveCSS('width', '430px');
+
+  await setImmersiveMode(page, true);
+  await expect(terminalRail).toHaveCSS('width', '0px');
+  await expect(terminalRail.locator('.pane-terminal-rail-shell')).toHaveAttribute('inert', '');
+  await expect(terminalRail.locator('.pane-terminal-rail-shell')).toHaveAttribute('aria-hidden', 'true');
+  await expect(terminalRail.locator('.pane-terminal-rail-clip')).toHaveCSS('overflow', 'hidden');
+  await expect.poll(async () => (await terminalRail.locator('.pane-terminal-rail-clip').boundingBox())!.width).toBe(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test('a disappearing separator rolls back tentative intent and restores document interaction state', async ({ page }) => {
+  const preference = '{"version":2,"preferredPx":500}';
+  await installFixture(page, { 'pane-detail-panel-width:v2': preference });
+  await openWorktree(page);
+
+  const inspector = page.locator('.pane-detail-panel-vertical');
+  const separator = page.getByRole('separator', { name: 'Resize inspector' });
+  await expect(inspector).toHaveCSS('width', '500px');
+  await page.evaluate(() => {
+    document.body.style.cursor = 'crosshair';
+    document.body.style.userSelect = 'text';
+  });
+  const start = await separator.boundingBox();
+  await page.mouse.move(start!.x + start!.width / 2, start!.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(start!.x - 40, start!.y + 100);
+  await expect.poll(async () => (await inspector.boundingBox())!.width).toBeGreaterThan(500);
+
+  await page.setViewportSize({ width: 600, height: 700 });
+  await expect(separator).toHaveCount(0);
+  await expect(inspector).toHaveCSS('width', '0px');
+  await expect.poll(() => page.evaluate(() => ({
+    cursor: document.body.style.cursor,
+    userSelect: document.body.style.userSelect,
+  }))).toEqual({ cursor: 'crosshair', userSelect: 'text' });
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(preference);
+  await page.mouse.up();
+
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await expect(inspector).toHaveCSS('width', '500px');
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(preference);
+});
+
+test('real sidebar and viewport changes clamp without overwriting and restore without overflow', async ({ page }) => {
+  const preference = '{"version":2,"preferredPx":500}';
+  await installFixture(page, { 'pane-detail-panel-width:v2': preference });
+  await openWorktree(page);
+
+  const inspector = page.locator('.pane-detail-panel-vertical');
+  const editor = page.locator('.pane-editor-stage');
+  const separator = page.getByRole('separator', { name: 'Resize inspector' });
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await expect.poll(async () => (await inspector.boundingBox())!.width).toBeLessThan(500);
+  expect((await editor.boundingBox())!.width).toBeGreaterThanOrEqual(319);
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(preference);
+
+  await page.getByRole('button', { name: 'Collapse sidebar' }).click();
+  await expect(inspector).toHaveCSS('width', '500px');
+  await expect(separator).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(preference);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  await page.getByRole('button', { name: 'Expand sidebar' }).click();
+  await expect.poll(async () => (await inspector.boundingBox())!.width).toBeLessThan(500);
+  await page.setViewportSize({ width: 600, height: 700 });
+  await expect(inspector).toHaveCSS('width', '0px');
+  await expect(inspector.locator('.pane-detail-panel-inner')).toHaveAttribute('inert', '');
+  await expect(separator).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(preference);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await expect(inspector).toHaveCSS('width', '500px');
+  await expect(separator).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('pane-detail-panel-width:v2'))).toBe(preference);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
