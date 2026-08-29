@@ -173,7 +173,25 @@ test('all worktree surfaces use container bounds, accessible resizing, and durab
   await page.keyboard.press('ArrowUp');
   const committedTerminal = await page.evaluate(() => localStorage.getItem('pane-bottom-terminal-height:v2'));
   expect(committedTerminal).toMatch(/^\{"version":2,"preferredPx":\d+\}$/);
-  const expandedHeight = (await terminalDock.boundingBox())!.height;
+  const heightBeforeReleaseTest = (await terminalDock.boundingBox())!.height;
+  const terminalReleaseStart = await terminalSeparator.boundingBox();
+  const terminalReleaseStartY = terminalReleaseStart!.y + terminalReleaseStart!.height / 2;
+  await page.mouse.move(terminalReleaseStart!.x + 100, terminalReleaseStartY);
+  await page.mouse.down();
+  await page.mouse.move(terminalReleaseStart!.x + 100, terminalReleaseStartY - 10);
+  await terminalSeparator.dispatchEvent('pointerup', {
+    pointerId: 1,
+    clientX: terminalReleaseStart!.x + 100,
+    clientY: terminalReleaseStartY - 35,
+  });
+  await page.mouse.up();
+  await expect.poll(async () => (await terminalDock.boundingBox())!.height).toBe(heightBeforeReleaseTest + 35);
+  await expect.poll(() => page.evaluate(() => {
+    const stored = localStorage.getItem('pane-bottom-terminal-height:v2');
+    return stored ? Number(JSON.parse(stored).preferredPx) : 0;
+  })).toBe(heightBeforeReleaseTest + 35);
+
+  const expandedHeight = heightBeforeReleaseTest + 35;
   await page.getByRole('button', { name: 'Collapse terminal', exact: true }).click();
   await expect(terminalSeparator).toHaveCount(0);
   await page.getByRole('button', { name: 'Expand terminal', exact: true }).click();
@@ -229,19 +247,44 @@ test('all worktree surfaces use container bounds, accessible resizing, and durab
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
-test('persisted swapped layout without a terminal renders an active default inspector', async ({ page }) => {
+test('a terminal arriving after the default branch renders switches the branch and resize enablement together', async ({ page }) => {
   const panelsWithoutWorktreeTerminal = panels.filter(item => item.id !== 'adaptive-dock');
-  await installFixture(page, { 'pane-layout-swapped': 'true' }, panelsWithoutWorktreeTerminal);
+  await installFixture(page, {
+    'pane-layout-swapped': 'true',
+    'pane-detail-panel-width:v2': '{"version":2,"preferredPx":410}',
+    'pane-right-terminal-width:v2': '{"version":2,"preferredPx":430}',
+    'pane-bottom-detail-height:v2': '{"version":2,"preferredPx":210}',
+  }, panelsWithoutWorktreeTerminal);
   await openWorktree(page);
 
   const inspector = page.locator('.pane-detail-panel-vertical');
   await expect(page.locator('.pane-terminal-rail')).toHaveCount(0);
-  await expect(inspector).toHaveCSS('width', '360px');
+  await expect(page.locator('.pane-detail-panel-horizontal')).toHaveCount(0);
+  await expect(inspector).toHaveCSS('width', '410px');
   await expect(inspector.locator('.pane-detail-panel-inner')).not.toHaveAttribute('inert', '');
-  await expect(page.getByRole('separator', { name: 'Resize inspector' })).toBeVisible();
+  const inspectorSeparator = page.getByRole('separator', { name: 'Resize inspector' });
+  await expect(inspectorSeparator).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Details' })).toBeVisible();
-  await page.getByRole('button', { name: 'Hide details' }).click();
-  await expect(inspector).toHaveCSS('width', '0px');
+
+  await page.evaluate((lateTerminal) => {
+    // SAFETY: installFixture defines this test-only mock before application code runs.
+    const mock = (window as typeof window & {
+      __paneTestElectronMock: { emitPanelCreated: (panel: typeof lateTerminal) => void };
+    }).__paneTestElectronMock;
+    mock.emitPanelCreated(lateTerminal);
+  }, panels[0]);
+
+  await expect(inspector).toHaveCount(0);
+  await expect(inspectorSeparator).toHaveCount(0);
+  const terminalRail = page.locator('.pane-terminal-rail');
+  const horizontalDetail = page.locator('.pane-detail-panel-horizontal');
+  await expect(terminalRail).toHaveCSS('width', '430px');
+  await expect(terminalRail.locator('.pane-terminal-shell-body')).not.toHaveAttribute('inert', '');
+  await expect(horizontalDetail).toHaveCSS('height', '210px');
+  await expect(horizontalDetail.locator('.pane-detail-panel-inner')).not.toHaveAttribute('inert', '');
+  await expect(page.getByRole('separator', { name: 'Resize terminal' })).toHaveAttribute('aria-orientation', 'vertical');
+  await expect(page.getByRole('separator', { name: 'Resize detail panel' })).toHaveAttribute('aria-orientation', 'horizontal');
+  await expect(page.getByRole('separator')).toHaveCount(2);
 });
 
 test('an observed active terminal resize debounces through the existing xterm refit path', async ({ page }) => {
