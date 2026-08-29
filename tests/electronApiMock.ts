@@ -300,6 +300,9 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
         if (prop === 'onGitStatusUpdated') {
           return (callback: MockEventCallback) => subscribe('git-status-updated', callback);
         }
+        if (prop === 'onTerminalFontUpdated') {
+          return (callback: MockEventCallback) => subscribe('config:terminal-font-updated', callback);
+        }
         if (prop === 'onSessionUpdated') {
           return (callback: MockEventCallback) => subscribe('session:updated', callback);
         }
@@ -581,7 +584,14 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
           }
           Object.assign(configState, updates);
           configUpdates.push(clone(updates));
-          return success(clone(configState));
+          const response = success(clone(configState));
+          if ('terminalFontFamily' in updates || 'terminalFontSize' in updates) {
+            queueMicrotask(() => emit('config:terminal-font-updated', {
+              terminalFontFamily: configState.terminalFontFamily,
+              terminalFontSize: configState.terminalFontSize,
+            }));
+          }
+          return response;
         },
         getAvailableShells: () => success(clone(mockOptions.availableShells ?? [])),
         getMonospaceFonts: () => success([]),
@@ -944,6 +954,9 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
         },
         getConfigUpdates() {
           return clone(configUpdates);
+        },
+        getListenerCount(channel: string) {
+          return listeners.get(channel)?.size ?? 0;
         },
         getFeedbackSubmissions() {
           return clone(feedbackSubmissions);

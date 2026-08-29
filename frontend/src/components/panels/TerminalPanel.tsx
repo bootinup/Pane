@@ -241,6 +241,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
   const xtermRef = useRef<Terminal | null>(null);
   // Async initialization must publish the instance reactively so terminal hooks subscribe immediately.
   const [terminalInstance, setTerminalInstance] = useState<Terminal | null>(null);
+  const [terminalFontObservation, setTerminalFontObservation] = useState<string>();
   const fitAddonRef = useRef<FitAddon | null>(null);
   const webglAddonRef = useRef<WebglAddon | null>(null);
   const webLinksAddonRef = useRef<WebLinksAddon | null>(null);
@@ -966,9 +967,10 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
 
         // Create XTerm instance
         devLog.debug('[TerminalPanel] Creating XTerm instance...');
+        const initialFontFamily = buildTerminalFontFamily(terminalFontFamily);
         terminal = new Terminal({
           fontSize: terminalFontSize,
-          fontFamily: buildTerminalFontFamily(terminalFontFamily),
+          fontFamily: initialFontFamily,
           theme: getTerminalTheme(),
           scrollback: 2500,
           cursorBlink: false,
@@ -996,6 +998,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
             },
           },
         });
+        setTerminalFontObservation(initialFontFamily);
         devLog.debug('[TerminalPanel] XTerm instance created:', !!terminal);
 
         fitAddon = new FitAddon();
@@ -1658,6 +1661,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
               ]).then(() => {
                 if (!terminal || disposed) return;
                 terminal.options.fontFamily = newFontFamily;
+                setTerminalFontObservation(newFontFamily);
                 terminal.options.fontSize = newFontSize;
                 // Hidden-container guard (see mount fit): defer to the activation fit
                 if (fitAddon && (terminalRef.current?.getBoundingClientRect().width ?? 0) >= MIN_VIABLE_RECT_PX) {
@@ -2068,7 +2072,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
       onMouseMove={onMouseMove}
       onKeyDown={handleTerminalKeyDown}
     >
-      <div ref={terminalRef} className="h-full w-full" />
+      <div ref={terminalRef} className="h-full w-full" data-terminal-font={terminalFontObservation} />
 
       {/* Terminal search overlay */}
       <TerminalSearchOverlay

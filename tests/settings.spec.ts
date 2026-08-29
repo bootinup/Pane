@@ -5,6 +5,7 @@ import { installElectronApiMock } from './electronApiMock';
 type SettingsMock = {
   getConfig: () => JsonObject;
   getConfigUpdates: () => JsonObject[];
+  getListenerCount: (channel: string) => number;
   getPreferenceWrites: () => Array<{ key: string; value: string }>;
   failNextConfigUpdate: (error: string) => void;
   failNextPreferenceSet: (error: string) => void;
@@ -27,6 +28,88 @@ async function bootSettings(page: Page, options: Parameters<typeof installElectr
 }
 
 test.describe('Settings', () => {
+  test('terminal font updates the live xterm only', async ({ page }) => {
+    const now = new Date(0).toISOString();
+    const project = {
+      id: 913,
+      name: 'Terminal font fixture',
+      path: '/tmp/terminal-font-fixture',
+      active: true,
+      created_at: now,
+      updated_at: now,
+    };
+    const session = {
+      id: 'terminal-font-session',
+      name: 'Live terminal font',
+      worktreePath: project.path,
+      prompt: '',
+      status: 'stopped',
+      createdAt: now,
+      lastActivity: now,
+      output: [],
+      jsonMessages: [],
+      isRunning: false,
+      permissionMode: 'ignore',
+      projectId: project.id,
+      displayOrder: 0,
+      isFavorite: false,
+      toolType: 'none',
+      archived: false,
+      gitStatus: { state: 'clean', ahead: 0, behind: 0, hasUncommittedChanges: false, hasUntrackedFiles: false, filesChanged: 0 },
+    };
+    const dockPanel = {
+      id: 'terminal-font-dock',
+      sessionId: session.id,
+      type: 'terminal',
+      title: 'Terminal',
+      state: { isActive: false, hasBeenViewed: true, customState: { isInitialized: false } },
+      metadata: { createdAt: now, lastActiveAt: now, position: 0, permanent: true },
+    };
+    const panel = {
+      id: 'terminal-font-panel',
+      sessionId: session.id,
+      type: 'terminal',
+      title: 'Shell',
+      state: { isActive: true, hasBeenViewed: true, customState: { isInitialized: true } },
+      metadata: { createdAt: now, lastActiveAt: now, position: 1, permanent: false },
+    };
+
+    await installElectronApiMock(page, {
+      platform: 'darwin',
+      initialProjects: [project],
+      initialSessions: [session],
+      initialPanels: [dockPanel, panel],
+      initialTerminalStates: { [panel.id]: { scrollbackBuffer: 'ready\r\n' } },
+      activeProjectId: project.id,
+    });
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await page.getByRole('button', { name: /^Expand repository Terminal font fixture$/ }).click();
+    await page.getByRole('button', { name: session.name, exact: true }).click();
+    await expect(page.locator('.xterm-screen')).toHaveCount(1, { timeout: 15_000 });
+
+    const host = page.locator('[data-terminal-font]').first();
+    await expect(host).toHaveAttribute('data-terminal-font', '"Geist Mono", "Symbols Nerd Font Mono", monospace');
+    await expect.poll(() => page.evaluate(() => {
+      // SAFETY: installElectronApiMock defines this test-only bridge before the page loads.
+      const mock = (window as typeof window & { __paneTestElectronMock: SettingsMock }).__paneTestElectronMock;
+      return mock.getListenerCount('config:terminal-font-updated');
+    })).toBeGreaterThan(0);
+    const bodyFont = await page.locator('body').evaluate((element) => getComputedStyle(element).fontFamily);
+    await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    const fontInput = page.getByRole('textbox', { name: 'Custom terminal font family' });
+    await fontInput.fill('Menlo');
+    await fontInput.blur();
+
+    await expect.poll(() => host.getAttribute('data-terminal-font')).toBe('"Menlo", "Symbols Nerd Font Mono", monospace');
+    await expect(page.locator('body')).toHaveCSS('font-family', bodyFont);
+    // SAFETY: installElectronApiMock defines this test-only bridge before the page loads.
+    const updates = await page.evaluate(() => (
+      window as typeof window & { __paneTestElectronMock: SettingsMock }
+    ).__paneTestElectronMock.getConfigUpdates());
+    expect(updates.at(-1)).toEqual({ terminalFontFamily: 'Menlo' });
+  });
+
   test('hides unsupported Cursor as a default Pane Chat agent on Windows', async ({ page }) => {
     await page.addInitScript(() => {
       Object.defineProperty(navigator, 'platform', { configurable: true, get: () => 'Win32' });
