@@ -90,7 +90,8 @@ export function HorizontalDetailPanel({
   const gitStatus = session.gitStatus;
   const isProject = !!session.isMainRepo;
   const gitUnavailable = isProject && gitStatus?.state === 'unknown';
-  const contentActive = !immersiveMode && (bodyActive || Boolean(isCollapsed));
+  const collapsedContentActive = Boolean(isCollapsed) && (availableHeight ?? 0) > 0;
+  const contentActive = !immersiveMode && (bodyActive || collapsedContentActive);
 
   return (
     <div

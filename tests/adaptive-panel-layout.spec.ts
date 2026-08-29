@@ -312,6 +312,47 @@ test('render-disabled terminals consume zero geometry and the swapped fixed shel
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
+test('zero-height collapsed detail is inert until observed height returns', async ({ page }) => {
+  await installFixture(page, {
+    'pane-layout-swapped': 'true',
+    'pane-detail-collapsed': 'true',
+  });
+  await openWorktree(page);
+
+  const center = page.locator('.pane-center-column');
+  const horizontalDetail = page.locator('.pane-detail-panel-horizontal');
+  const horizontalDetailInner = horizontalDetail.locator('.pane-detail-panel-inner');
+  const expandButton = horizontalDetail.locator('button[aria-label="Expand detail panel"]');
+
+  await expect(horizontalDetailInner).not.toHaveAttribute('inert', '');
+  await expect(horizontalDetail.getByRole('button', { name: 'Expand detail panel' })).toBeVisible();
+
+  await center.evaluate(element => {
+    element.setAttribute('style', 'flex: 0 0 260px; width: 260px; height: 0; align-self: flex-start');
+  });
+  await expect(horizontalDetail).toHaveCSS('max-height', '0px');
+  await expect.poll(async () => (await horizontalDetailInner.boundingBox())!.height).toBe(0);
+  await expect(horizontalDetailInner).toHaveAttribute('inert', '');
+  await expect(horizontalDetailInner).toHaveAttribute('aria-hidden', 'true');
+  await expect(horizontalDetail.getByRole('button', { name: 'Expand detail panel' })).toHaveCount(0);
+  expect(await horizontalDetailInner.locator('button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])').evaluateAll(elements => {
+    return elements.filter(element => {
+      if (!(element instanceof HTMLElement)) return false;
+      element.focus();
+      return document.activeElement === element;
+    }).length;
+  })).toBe(0);
+  await expect(expandButton).not.toBeFocused();
+
+  await center.evaluate(element => element.removeAttribute('style'));
+  await expect.poll(async () => (await horizontalDetail.boundingBox())!.height).toBeGreaterThan(0);
+  await expect(horizontalDetailInner).not.toHaveAttribute('inert', '');
+  await expect(horizontalDetailInner).toHaveAttribute('aria-hidden', 'false');
+  await expect(horizontalDetail.getByRole('button', { name: 'Expand detail panel' })).toBeVisible();
+  await expandButton.focus();
+  await expect(expandButton).toBeFocused();
+});
+
 test('a disappearing separator rolls back tentative intent and restores document interaction state', async ({ page }) => {
   const preference = '{"version":2,"preferredPx":500}';
   await installFixture(page, { 'pane-detail-panel-width:v2': preference });
