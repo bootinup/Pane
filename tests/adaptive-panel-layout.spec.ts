@@ -552,7 +552,8 @@ test('the first committed frame already reflects the container instead of a zero
     new MutationObserver(sample).observe(document.documentElement, {
       childList: true, subtree: true, attributes: true, attributeFilter: ['style'],
     });
-    const frame = () => { sample(); requestAnimationFrame(frame); };
+    let frames = 0;
+    const frame = () => { sample(); if (++frames < 300) requestAnimationFrame(frame); };
     requestAnimationFrame(frame);
   });
   await openWorktree(page);
@@ -608,6 +609,49 @@ test('a separator unmounted mid-drag releases drag ownership on pointer release'
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+Tab' : 'Control+Shift+Tab');
   await expect(terminalDock).toHaveCSS('height', '260px');
   await expect(terminalSeparator).toBeVisible();
+});
+
+test('a separator removed from the DOM mid-drag releases ownership on the next pointer event', async ({ page }) => {
+  await installFixture(page, {
+    'pane-terminal-collapsed': 'false',
+    'pane-detail-panel-width:v2': '{"version":2,"preferredPx":500}',
+    'pane-bottom-terminal-height:v2': '{"version":2,"preferredPx":260}',
+  });
+  await openWorktree(page);
+
+  const terminalDock = page.locator('.pane-terminal-dock');
+  const terminalSeparator = page.getByRole('separator', { name: 'Resize terminal' });
+  const start = await terminalSeparator.boundingBox();
+  await page.mouse.move(start!.x + 200, start!.y + start!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(start!.x + 200, start!.y - 30);
+  await expect.poll(async () => (await terminalDock.boundingBox())!.height).toBeGreaterThan(260);
+  expect(await page.evaluate(() => document.body.style.cursor)).toBe('row-resize');
+
+  // Detach the captured element behind React's back: the hook stays enabled,
+  // so no effect can end the transaction and no capture events reach React.
+  await terminalSeparator.evaluate(element => element.remove());
+  await expect(terminalSeparator).toHaveCount(0);
+  // The gesture may end outside the window with no pointerup at all; the next
+  // pointer event from this pointer must be enough to release ownership.
+  await page.mouse.move(start!.x + 200, start!.y - 31);
+  await expect.poll(() => page.evaluate(() => ({
+    cursor: document.body.style.cursor,
+    userSelect: document.body.style.userSelect,
+  }))).toEqual({ cursor: '', userSelect: '' });
+  await page.mouse.up();
+  await expect(terminalDock).toHaveCSS('height', '260px');
+  expect(await page.evaluate(() => localStorage.getItem('pane-bottom-terminal-height:v2'))).toBe('{"version":2,"preferredPx":260}');
+
+  // Another hook instance must accept a drag: a stuck shared owner would reject it.
+  const inspector = page.locator('.pane-detail-panel-vertical');
+  const inspectorSeparator = page.getByRole('separator', { name: 'Resize inspector' });
+  const inspectorStart = await inspectorSeparator.boundingBox();
+  await page.mouse.move(inspectorStart!.x + inspectorStart!.width / 2, inspectorStart!.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(inspectorStart!.x - 40, inspectorStart!.y + 100);
+  await expect.poll(async () => (await inspector.boundingBox())!.width).toBeGreaterThan(500);
+  await page.mouse.up();
 });
 
 test('a disappearing separator rolls back tentative intent and restores document interaction state', async ({ page }) => {

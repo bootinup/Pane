@@ -22,8 +22,10 @@ interface PointerTransaction {
   oldPreferred: number | undefined;
   previousCursor: string;
   previousUserSelect: string;
-  releaseFallback: (event: PointerEvent) => void;
+  releaseFallback: (event: Event) => void;
 }
+
+const RELEASE_FALLBACK_EVENTS = ['pointerup', 'pointercancel', 'pointermove', 'blur'] as const;
 
 export interface OuterResizeSeparatorHandlers {
   onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
@@ -53,8 +55,9 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
   const policy = useMemo(() => resolveOuterPanelRenderPolicy(config, size, enabled), [config, enabled, size]);
 
   const resetDocumentInteraction = useCallback((transaction: PointerTransaction) => {
-    window.removeEventListener('pointerup', transaction.releaseFallback, true);
-    window.removeEventListener('pointercancel', transaction.releaseFallback, true);
+    for (const type of RELEASE_FALLBACK_EVENTS) {
+      window.removeEventListener(type, transaction.releaseFallback, true);
+    }
     document.body.style.cursor = transaction.previousCursor;
     document.body.style.userSelect = transaction.previousUserSelect;
     try {
@@ -101,17 +104,22 @@ export function useOuterPanelResize({ config, containerPx, enabled }: UseOuterPa
     event.currentTarget.focus();
     event.currentTarget.setPointerCapture(event.pointerId);
     const coordinate = config.axis === 'width' ? event.clientX : event.clientY;
-    // If the separator is unmounted mid-drag while this hook stays enabled,
-    // the browser delivers neither lostpointercapture nor pointercancel to
-    // React, so the release must be observed at the window to end ownership.
+    // If the separator is removed from the DOM mid-drag while this hook stays
+    // enabled, the browser delivers neither lostpointercapture nor
+    // pointercancel to React and implicit capture is gone, so a release
+    // outside the window may never produce an event at all. Once the target
+    // is disconnected, the next event from this pointer — or window blur —
+    // ends the transaction so the shared owner cannot outlive the gesture.
     const pointerId = event.pointerId;
-    const releaseFallback = (release: PointerEvent) => {
+    const releaseFallback = (fallbackEvent: Event) => {
       const transaction = transactionRef.current;
-      if (!transaction || release.pointerId !== pointerId || transaction.target.isConnected) return;
+      if (!transaction || transaction.pointerId !== pointerId || transaction.target.isConnected) return;
+      if (fallbackEvent instanceof PointerEvent && fallbackEvent.pointerId !== pointerId) return;
       rollback();
     };
-    window.addEventListener('pointerup', releaseFallback, true);
-    window.addEventListener('pointercancel', releaseFallback, true);
+    for (const type of RELEASE_FALLBACK_EVENTS) {
+      window.addEventListener(type, releaseFallback, true);
+    }
     activeDragOwner = ownerRef.current;
     transactionRef.current = {
       pointerId,
