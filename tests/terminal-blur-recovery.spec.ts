@@ -243,7 +243,6 @@ for (const durationMs of [9_999, 10_000, 10_001]) {
   test(`performance blur boundary preserves the mounted terminal at ${durationMs} ms`, async ({ page }) => {
     const { panel, webglLoaded } = await bootFixture(page);
     expect((await maskAppearances(page)).length).toBeGreaterThan(0);
-    test.skip(!webglLoaded, 'WebGL renderer not attached; retention path is not reachable in this browser');
     expect(await xtermEvaluate(panel, (terminal) => terminal.buffer.active.length)).toBeGreaterThan(0);
 
     await writeLines(panel, 200);
@@ -264,7 +263,7 @@ for (const durationMs of [9_999, 10_000, 10_001]) {
     const lastDepth = depths.at(-1)?.split(': ').at(-1);
 
     expect(sawMask).toBe(false);
-    expect(sawTimeoutDetach).toBe(false);
+    if (webglLoaded) expect(sawTimeoutDetach).toBe(false);
     expect(lastDepth).toBe('light');
     expect(after).toEqual(before);
   });
@@ -272,7 +271,6 @@ for (const durationMs of [9_999, 10_000, 10_001]) {
 
 test('battery saver retains delayed detach and full recovery', async ({ page }) => {
   const { panel, webglLoaded } = await bootFixture(page, 'batterySaver');
-  test.skip(!webglLoaded, 'WebGL renderer not attached; delayed detach path is not reachable in this browser');
   const fullDepthLine = `Activation depth for panel ${primaryPanel.id}: full`;
   const fullDepthCount = (lines: string[]) => lines.filter((line) => line.includes(fullDepthLine)).length;
   const fullDepthBeforeBlur = fullDepthCount(await lifecycleLogs(page));
@@ -281,7 +279,9 @@ test('battery saver retains delayed detach and full recovery', async ({ page }) 
   await refocus(page);
   const logs = await lifecycleLogs(page);
   expect(await maskAppearances(page, panel)).not.toEqual([]);
-  expect(logs.some((line) => line.includes('reason=app-blur-timeout'))).toBe(true);
+  if (webglLoaded) {
+    expect(logs.some((line) => line.includes('reason=app-blur-timeout'))).toBe(true);
+  }
   // Boot already logged one full activation; the refocus must add another so
   // a battery-saver refocus that wrongly selected `hot` cannot pass on boot alone.
   expect(fullDepthCount(logs)).toBe(fullDepthBeforeBlur + 1);

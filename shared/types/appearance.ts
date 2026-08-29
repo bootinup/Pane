@@ -6,6 +6,7 @@ export type Theme =
   | 'haar' | 'abyss' | 'understory' | 'colorblind-safe' | 'low-fatigue'
   | 'high-legibility';
 
+/** Kept in sync with the pre-React bootstrap in frontend/index.html by themeClasses.test.ts. */
 export const THEME_CLASSES = {
   light: ['light'],
   'light-rounded': ['light', 'light-rounded'],
@@ -162,11 +163,19 @@ export const APPEARANCE_ARG_PREFIX = '--pane-appearance=';
 export const encodeAppearanceSnapshotArg = (snapshot: AppearanceSnapshot): string =>
   Buffer.from(JSON.stringify(snapshot), 'utf8').toString('base64url');
 
+const decodeBase64UrlUtf8 = (value: string): string => {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+};
+
 export function decodeAppearanceSnapshotArg(argv: readonly string[]): AppearanceSnapshot | undefined {
   const argument = argv.find((value) => value.startsWith(APPEARANCE_ARG_PREFIX));
   if (!argument) return undefined;
   try {
-    const parsed: unknown = JSON.parse(Buffer.from(argument.slice(APPEARANCE_ARG_PREFIX.length), 'base64url').toString('utf8'));
+    const parsed: unknown = JSON.parse(decodeBase64UrlUtf8(argument.slice(APPEARANCE_ARG_PREFIX.length)));
     const source = asRecord(parsed);
     const { appearance, diagnostics, migrated } = normalizeAppearance(source);
     return migrated || diagnostics.length > 0 ? undefined : appearance;

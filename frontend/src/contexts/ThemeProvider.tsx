@@ -84,6 +84,10 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [config?.highContrast]);
 
+  // Layout effect (not passive): descendants read the stamped classes and color-scheme via
+  // getComputedStyle in their own effects (terminal palette, log ANSI colours), while the
+  // passive background-colour and overlay-colour readers need current tokens; a passive
+  // effect here would leave them one theme behind.
   useLayoutEffect(() => {
     const root = document.documentElement;
     const body = document.body;
