@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EditorDiffRef } from '../../../../../shared/types/panels';
-import { diffRefLabel, isMutableScope, normalizeEditorDiffRef, sameScope, scopeKey, scopeLabel } from './diffScope';
+import { diffRefLabel, editorDiffRefForFile, isMutableScope, normalizeEditorDiffRef, sameScope, scopeKey, scopeLabel } from './diffScope';
 
 describe('diff scope helpers', () => {
   it('keys and labels every scope', () => {
@@ -19,4 +19,12 @@ describe('diff scope helpers', () => {
     const ref: EditorDiffRef = { kind: 'scope', scope: { kind: 'session' } };
     expect(diffRefLabel(ref)).toBe('All changes');
   });
+});
+
+it('omits previousPath from the editor diff ref for non-renamed files', () => {
+  const scope = { kind: 'session' } as const;
+  const renamed = editorDiffRefForFile(scope, { path: 'b.ts', previousPath: 'a.ts', kind: 'renamed', additions: 0, deletions: 0, isBinary: false });
+  const modified = editorDiffRefForFile(scope, { path: 'c.ts', kind: 'modified', additions: 1, deletions: 1, isBinary: false });
+  expect(renamed).toEqual({ kind: 'scope', scope, previousPath: 'a.ts' });
+  expect('previousPath' in modified).toBe(false);
 });

@@ -25,7 +25,9 @@ export function scopeLabel(scope: DiffScope, context?: { ref?: string; message?:
 }
 
 export function editorDiffRefForFile(scope: DiffScope, file: ChangedFileSummary): EditorDiffRef {
-  return { kind: 'scope', scope, previousPath: file.previousPath };
+  // Omit previousPath entirely for non-renames: an explicit `undefined` survives the
+  // structured-clone IPC boundary and the main process rejects it as a non-JSON value.
+  return file.previousPath ? { kind: 'scope', scope, previousPath: file.previousPath } : { kind: 'scope', scope };
 }
 
 export function normalizeEditorDiffRef(ref: EditorDiffRef | LegacyEditorDiffRef): { scope: DiffScope; previousPath?: string } | null {
