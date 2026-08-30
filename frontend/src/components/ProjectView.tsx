@@ -11,11 +11,14 @@ import type { PanelCreateOptions } from '../types/panelComponents';
 import { SessionProvider } from '../contexts/SessionContext';
 import { DetailPanel } from './DetailPanel';
 import type { InspectorTab } from './InspectorTabs';
-import { useResizable } from '../hooks/useResizable';
+import { useObservedContentBox } from '../hooks/useObservedContentBox';
+import { useOuterPanelResize } from '../hooks/useOuterPanelResize';
+import { OUTER_PANEL_CONFIGS } from '../utils/outerPanelSizing';
 import { CommitMessageDialog } from './session/CommitMessageDialog';
 import { SetTrackingBranchDialog } from './session/SetTrackingBranchDialog';
 import { useMainRepoGitActions } from '../hooks/useMainRepoGitActions';
 import { useProjectViewActionsStore } from '../stores/projectViewActionsStore';
+import { useNavigationStore } from '../stores/navigationStore';
 import { PANEL_CAPABILITIES } from '../../../shared/types/panels';
 import type { ProjectEnvironment } from '../../../shared/types/panels';
 
@@ -83,13 +86,12 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
     localStorage.setItem('pane-project-detail-panel-visible', String(detailVisible));
   }, [detailVisible]);
 
-  // Right-side resizable
-  const { width: detailWidth, startResize: startDetailResize } = useResizable({
-    defaultWidth: 360,
-    minWidth: 240,
-    maxWidth: 720,
-    storageKey: 'pane-project-detail-panel-width',
-    side: 'right'
+  const immersiveMode = useNavigationStore(s => s.immersiveMode);
+  const projectContentBox = useObservedContentBox<HTMLDivElement>();
+  const detailResize = useOuterPanelResize({
+    config: OUTER_PANEL_CONFIGS.projectInspector,
+    containerPx: projectContentBox.width,
+    enabled: detailVisible && !immersiveMode,
   });
 
   // Load panels when main repo session changes (no auto-creation, matches worktree session behavior)
@@ -386,9 +388,9 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
           />
 
           {/* Content area: center panels + right detail */}
-          <div className="flex-1 flex flex-row min-h-0">
+          <div ref={projectContentBox.ref} className="pane-project-content flex-1 flex flex-row min-h-0 min-w-0">
             {/* Center: panel content */}
-            <div className="flex-1 relative min-h-0 overflow-hidden">
+            <div className="flex-1 relative min-h-0 min-w-0 overflow-hidden">
               {isLoadingSession ? (
                 <div
                   role="status"
@@ -447,8 +449,16 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
             <DetailPanel
               isVisible={detailVisible}
               onToggle={() => setDetailVisible(v => !v)}
-              width={detailWidth}
-              onResize={startDetailResize}
+              width={detailResize.renderedPx}
+              bodyActive={detailResize.bodyActive}
+              resizeSeparator={detailResize.separatorVisible ? {
+                label: 'Resize main repository inspector',
+                orientation: 'vertical',
+                value: detailResize.effectivePx,
+                minimum: detailResize.floor,
+                maximum: detailResize.cap,
+                ...detailResize.separatorHandlers,
+              } : undefined}
               mergeError={mainRepoGit.error}
               inspectorTab={inspectorTab}
               onInspectorTabChange={openInspector}

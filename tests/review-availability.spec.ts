@@ -120,6 +120,7 @@ async function openSession(
     withLocalChanges?: boolean;
     initialPanels?: JsonObject[];
     initialConfig?: JsonObject;
+    expectInspector?: boolean;
   } = { withLocalChanges: true },
 ): Promise<void> {
   await installElectronApiMock(page, {
@@ -138,7 +139,9 @@ async function openSession(
     exact: true,
   });
   await paneButton.click();
-  await expect(page.getByRole('tab', { name: 'Changes', exact: true })).toBeVisible();
+  if (options.expectInspector !== false) {
+    await expect(page.getByRole('tab', { name: 'Changes', exact: true })).toBeVisible();
+  }
 }
 
 async function capture(page: Page, testInfo: TestInfo, filename: string): Promise<void> {
@@ -220,6 +223,7 @@ test('Add Tool keeps long custom commands inside a narrow viewport', async ({ pa
 
   await page.setViewportSize({ width: 420, height: 720 });
   await openSession(page, baseGitStatus, {
+    expectInspector: false,
     initialConfig: {
       customCommands: [{ name: commandName, command: fullCommand }],
     },

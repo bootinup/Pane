@@ -191,14 +191,71 @@ body.understory {
 .pane-sidebar-slot,
 .pane-session-shell,
 .pane-session-content,
+.pane-project-content,
+.pane-center-column,
 .pane-editor-stage,
 .pane-terminal-shell-body,
 .pane-detail-panel-inner {
   min-height: 0;
+  min-width: 0;
 }
 
 .pane-session-shell {
   min-width: 0;
+}
+
+.pane-outer-resize-separator {
+  position: absolute;
+  z-index: 20;
+  touch-action: none;
+  outline: none;
+}
+
+.pane-outer-resize-separator-vertical {
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.pane-outer-resize-separator-horizontal {
+  top: -4px;
+  right: 0;
+  left: 0;
+  height: 8px;
+  cursor: row-resize;
+}
+
+.pane-outer-resize-separator-rule {
+  position: absolute;
+  background: var(--color-border-secondary);
+}
+
+.pane-outer-resize-separator-vertical .pane-outer-resize-separator-rule {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.pane-outer-resize-separator-horizontal .pane-outer-resize-separator-rule {
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.pane-outer-resize-separator:hover .pane-outer-resize-separator-rule,
+.pane-outer-resize-separator:active .pane-outer-resize-separator-rule,
+.pane-outer-resize-separator:focus-visible .pane-outer-resize-separator-rule {
+  background: var(--color-border-hover);
+}
+
+.pane-outer-resize-separator:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-focus-ring-subtle);
 }
 
 /* Flat chrome. Every theme shares one edge-to-edge layout: surfaces are
