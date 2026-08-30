@@ -133,6 +133,7 @@ export interface UpdateSessionData {
   favorite_pinned_at?: string | null;
   skip_continue_next?: boolean;
   pr_renamed?: boolean;
+  worktree_path?: string;
 }
 
 export interface PromptMarker {
