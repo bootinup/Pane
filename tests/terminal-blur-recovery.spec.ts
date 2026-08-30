@@ -227,15 +227,34 @@ async function advanceActivation(page: Page): Promise<void> {
   }
 }
 
-async function blurFor(page: Page, durationMs: number): Promise<void> {
+// Wait for every mounted TerminalPanel to commit the focus change before the
+// fake clock moves. In battery saver the same passive-effect flush that arms the
+// blur-detach timer also reports the gated visibility to main, so waiting for
+// that recorded invoke proves the timer is armed; a fixed wall-clock sleep raced
+// React's effect flush under load and armed the timer mid-`runFor`.
+async function waitForWindowFocusState(page: Page, focused: boolean): Promise<void> {
+  const stale = focused ? 'false' : 'true';
+  await expect(page.locator(`[data-window-focused="${stale}"]`)).toHaveCount(0);
+  await expect(page.locator('[data-window-focused]').first()).toHaveAttribute('data-window-focused', String(focused));
+}
+
+async function waitForVisibilityGate(page: Page, panelId: string, visible: boolean): Promise<void> {
+  await expect.poll(() => mockEvaluate(page, (mock) => mock.getInvokeCalls('terminal:setVisibility')).then((calls) => (
+    calls.filter((call) => call.args[0] === panelId).at(-1)?.args[1]
+  ))).toBe(visible);
+}
+
+async function blurFor(page: Page, durationMs: number, options: { gatedPanelId?: string } = {}): Promise<void> {
   await emitFocus(page, false);
-  await page.waitForTimeout(50);
+  await waitForWindowFocusState(page, false);
+  if (options.gatedPanelId) await waitForVisibilityGate(page, options.gatedPanelId, false);
   await page.clock.runFor(durationMs);
 }
 
 async function refocus(page: Page): Promise<void> {
   await resetMaskAppearances(page);
   await emitFocus(page, true);
+  await waitForWindowFocusState(page, true);
   await advanceActivation(page);
 }
 
@@ -275,13 +294,22 @@ test('battery saver retains delayed detach and full recovery', async ({ page }) 
   const fullDepthCount = (lines: string[]) => lines.filter((line) => line.includes(fullDepthLine)).length;
   const fullDepthBeforeBlur = fullDepthCount(await lifecycleLogs(page));
   await pauseClock(page);
-  await blurFor(page, 10_001);
+  await blurFor(page, 10_001, { gatedPanelId: primaryPanel.id });
+  if (webglLoaded) {
+    // Battery saver's contract is "detaches after the delay", not "at this exact
+    // tick": under load React can install the detach timer a few fake ms after
+    // the clock starts moving, so keep stepping (well short of a second cycle)
+    // until the detach is observed.
+    const detachLine = `panel ${primaryPanel.id} reason=app-blur-timeout`;
+    for (let extra = 0; extra < 2_000; extra += 100) {
+      if ((await lifecycleLogs(page)).some((line) => line.includes(detachLine))) break;
+      await page.clock.runFor(100);
+    }
+    expect((await lifecycleLogs(page)).some((line) => line.includes(detachLine))).toBe(true);
+  }
   await refocus(page);
   const logs = await lifecycleLogs(page);
   expect(await maskAppearances(page, panel)).not.toEqual([]);
-  if (webglLoaded) {
-    expect(logs.some((line) => line.includes('reason=app-blur-timeout'))).toBe(true);
-  }
   // Boot already logged one full activation; the refocus must add another so
   // a battery-saver refocus that wrongly selected `hot` cannot pass on boot alone.
   expect(fullDepthCount(logs)).toBe(fullDepthBeforeBlur + 1);

@@ -2087,7 +2087,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, isActiv
       onMouseMove={onMouseMove}
       onKeyDown={handleTerminalKeyDown}
     >
-      <div ref={terminalRef} className="h-full w-full" data-terminal-font={terminalFontObservation} />
+      <div ref={terminalRef} className="h-full w-full" data-terminal-font={terminalFontObservation} data-window-focused={windowFocused ? "true" : "false"} />
 
       {/* Terminal search overlay */}
       <TerminalSearchOverlay
