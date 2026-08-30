@@ -437,7 +437,9 @@ Read all of these in parallel:
 
 - \`${runtimeContext}\` (runtime context, has the doctor command)
 - \`${guidePath}\` (Pane Chat guide)
-- \`${claudeOrchestrator}\` (lifecycle, lanes, stages)
+- RunPane orchestrator skill for the active agent:
+  - Claude: \`${claudeOrchestrator}\`
+  - Codex: \`${codexOrchestrator}\`
 
 Then in parallel: run the doctor command from the runtime context,
 arm liveness (\`runpane watch --self-test\` then \`runpane watch --follow\`),
@@ -491,8 +493,10 @@ human), IDLE (nothing dispatched for 10min), STUCK (held input, verify
 and resubmit). HEARTBEAT every 60s proves liveness.
 
 Dead-watch: no line for 120s or non-zero exit means the primary is
-dead. Re-arm once. If it dies again, run
-\`runpane doctor --report\` and tell the human.
+dead. Re-arm once. If it dies again, capture the last 20 output lines
+to a file and run
+\`runpane doctor --report --title "runpane watch failed" --body-file <evidence-file> --json\`,
+then tell the human.
 
 ## Local references
 
