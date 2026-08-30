@@ -36,7 +36,7 @@
 - If dependencies change, run `pnpm run generate-notices` and commit updated `NOTICES`.
 
 ## Security & Configuration Tips
-- The root development toolchain requires Node >= `22.18`; `pnpm` >= `8`. Use `pnpm` only. Electron 41 bundles Node 24 for the app, while the published `packages/runpane` wrapper intentionally supports Node >= `18.17`.
+- The root development toolchain requires Node >= `22.18`; `pnpm` >= `8`. Use `pnpm` only. Electron 41 bundles Node 24 for the app, while the published `packages/runpane` wrapper intentionally supports Node >= `20`.
 - Secrets via `.env` (dotenv) for local dev; never commit secrets.
 - To avoid clobbering local data when hacking on Pane with Pane: `PANE_DIR=~/.pane_test pnpm dev`.
 
