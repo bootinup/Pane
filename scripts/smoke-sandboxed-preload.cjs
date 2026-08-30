@@ -3,6 +3,13 @@ process.env.NODE_ENV = 'production';
 const { app, BrowserWindow } = require('electron');
 
 const preloadPath = path.resolve(__dirname, '..', 'main', 'dist', 'main', 'src', 'preload.js');
+const defaultAppearance = {
+  appearanceMode: 'system',
+  theme: 'light-rounded',
+  systemLightTheme: 'light-rounded',
+  systemDarkTheme: 'dark',
+};
+const encodedAppearance = Buffer.from(JSON.stringify(defaultAppearance), 'utf8').toString('base64url');
 const timeout = setTimeout(() => {
   console.error('Sandboxed preload smoke test timed out');
   app.exit(1);
@@ -16,6 +23,7 @@ async function run() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      additionalArguments: [`--pane-appearance=${encodedAppearance}`],
     },
   });
   let preloadFailure = null;
@@ -27,12 +35,18 @@ async function run() {
   const apiAvailable = await window.webContents.executeJavaScript(
     'typeof window.electronAPI === "object" && typeof window.electronAPI.getAppVersion === "function"',
   );
+  const appearanceSnapshotAvailable = await window.webContents.executeJavaScript(
+    'typeof window.electronAPI.appearanceSnapshot === "object"',
+  );
 
   if (preloadFailure) {
     throw preloadFailure;
   }
   if (!apiAvailable) {
     throw new Error('Sandboxed preload did not expose window.electronAPI');
+  }
+  if (!appearanceSnapshotAvailable) {
+    throw new Error('Sandboxed preload did not decode the appearance snapshot');
   }
 
   console.log('Sandboxed preload smoke test passed');

@@ -241,7 +241,7 @@ async function openSession(page: Page, theme: string, opts: { highContrast?: boo
     if (hc) window.localStorage.setItem('high-contrast', 'true');
   }, { themeId: theme, hc: highContrast });
   await installElectronApiMock(page, {
-    initialConfig: { theme, highContrast },
+    initialConfig: { theme, appearanceMode: 'fixed', highContrast },
     initialProjects: [project],
     initialSessions: [session, secondSession],
     initialPanels: panels,
@@ -353,7 +353,7 @@ test('appearance picker shows all 15 themes, grouped by family', async ({ page }
   await page.setViewportSize({ width: 1440, height: 1700 });
   await page.addInitScript(() => { window.localStorage.setItem('theme', 'colorblind-safe'); });
   await installElectronApiMock(page, {
-    initialConfig: { theme: 'colorblind-safe' },
+    initialConfig: { theme: 'colorblind-safe', appearanceMode: 'fixed' },
     initialProjects: [project],
     initialSessions: [session],
     initialPanels: panels,

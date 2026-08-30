@@ -21,6 +21,14 @@ export const powerSaveBlocker = {
 
 export const BrowserWindow = vi.fn();
 
+export const nativeTheme = {
+  // SAFETY: Test stub models Electron's writable three-value themeSource property.
+  themeSource: 'system' as 'system' | 'light' | 'dark',
+  shouldUseDarkColors: false,
+  on: vi.fn(),
+  removeListener: vi.fn(),
+};
+
 export const panelManager = {
   emitPanelEvent: vi.fn(),
   getPanel: vi.fn(),

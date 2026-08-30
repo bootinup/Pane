@@ -35,6 +35,7 @@ import type {
 // The main build bundles this runtime dependency into preload.js; the sandbox
 // verification step rejects any remaining require other than Electron itself.
 import { boundary, decodeBoundary, type JsonObject } from '../../shared/validation/boundaryDecoder';
+import { decodeAppearanceSnapshotArg, type Theme } from '../../shared/types/appearance';
 
 interface LogEntry {
   timestamp: string;
@@ -434,8 +435,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // answer through additionalArguments, so the renderer can branch on it during
   // its first render instead of awaiting IPC and flashing the wrong layout.
   windowControlsOverlayEnabled: process.argv.includes(WINDOW_CONTROLS_OVERLAY_ARG),
+  appearanceSnapshot: decodeAppearanceSnapshotArg(process.argv),
   setTitleBarOverlay: (colors: WindowControlsOverlayColors): Promise<IPCResponse> =>
     invokeIpc('window:set-title-bar-overlay', colors),
+  setBackgroundColor: (payload: { theme: Theme; color: string }): Promise<IPCResponse> =>
+    invokeIpc('window:set-background-color', payload),
 
   // Version checking
   checkForUpdates: (): Promise<IPCResponse> => invokeIpc('version:check-for-updates'),
@@ -1034,6 +1038,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const wrappedCallback = (_event: Electron.IpcRendererEvent, data: { terminalFontFamily: string; terminalFontSize: number }) => callback(data);
       ipcRenderer.on('config:terminal-font-updated', wrappedCallback);
       return () => ipcRenderer.removeListener('config:terminal-font-updated', wrappedCallback);
+    },
+    onNativeAppearanceUpdated: (callback: (data: { prefersDark: boolean }) => void) => {
+      const wrappedCallback = (_event: Electron.IpcRendererEvent, data: { prefersDark: boolean }) => callback(data);
+      ipcRenderer.on('window:appearance-native-updated', wrappedCallback);
+      return () => ipcRenderer.removeListener('window:appearance-native-updated', wrappedCallback);
     },
 
     // Process management events

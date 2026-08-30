@@ -93,7 +93,9 @@ interface ElectronAPI {
   // plain boolean, not a promise: it is resolved in the preload from argv so the
   // first render already knows whether the page owns the title bar.
   windowControlsOverlayEnabled: boolean;
+  appearanceSnapshot?: import('../../../shared/types/appearance').AppearanceSnapshot;
   setTitleBarOverlay: (colors: { color: string; symbolColor: string }) => Promise<IPCResponse>;
+  setBackgroundColor: (payload: { theme: import('../../../shared/types/appearance').Theme; color: string }) => Promise<IPCResponse>;
 
   // Version checking
   checkForUpdates: () => Promise<IPCResponse<VersionInfo>>;
@@ -441,6 +443,7 @@ interface ElectronAPI {
 
     // Terminal font config events
     onTerminalFontUpdated: (callback: (data: { terminalFontFamily: string; terminalFontSize: number }) => void) => () => void;
+    onNativeAppearanceUpdated: (callback: (data: { prefersDark: boolean }) => void) => () => void;
 
     removeAllListeners: (channel: string) => void;
   };

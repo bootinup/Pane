@@ -169,7 +169,7 @@ function LeaderboardTable({
               return (
                 <tr
                   key={`${entry.rank}-${entry.displayName}`}
-                  className={`border-b border-border-primary/60 last:border-b-0 ${
+                  className={`border-b border-border-primary last:border-b-0 ${
                     isMe ? 'bg-interactive/8' : ''
                   }`}
                 >

@@ -13,6 +13,8 @@
   <img src="assets/readme-remote-pane.png" alt="Pane desktop app and Remote Pane mobile browser app" title="Pane desktop app and Remote Pane mobile browser app" width="100%">
 </a>
 
+Appearance follows your OS — see [Appearance](docs/APPEARANCE.md).
+
 [![AGPL-3.0 License](https://img.shields.io/badge/License-AGPL--3.0-555555.svg?labelColor=333333&color=666666)](./LICENSE)
 [![Downloads](https://img.shields.io/endpoint?url=https://runpane.com/api/badge/downloads&labelColor=333333&color=666666)](https://github.com/dcouple/Pane/releases)
 [![GitHub](https://img.shields.io/badge/GitHub-source-555555?labelColor=333333&color=666666&logo=github&logoColor=white)](https://github.com/dcouple/Pane)

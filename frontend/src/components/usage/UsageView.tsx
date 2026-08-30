@@ -117,7 +117,7 @@ function PaneCostCells({ pane }: { pane: UsagePaneCostSlice }) {
 
 function PaneUsageRow({ pane }: { pane: UsageByPane }) {
   return (
-    <tr className="border-b border-border-primary/60 last:border-b-0">
+    <tr className="border-b border-border-primary last:border-b-0">
       <td className="px-2 py-2" title={pane.worktreePath}>
         <span className="font-medium text-text-primary">{pane.paneName}</span>
         {pane.archived && (

@@ -28,7 +28,7 @@ const FileRow = memo<FileRowProps>(({ file, isActive, onOpen }) => (
     />
     <div className="relative z-10 pointer-events-none flex min-w-0 items-center gap-2">
       <FileText className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-      <span className="min-w-0 truncate text-[13px] text-text-primary">{file.path}</span>
+      <span className="min-w-0 truncate font-mono text-[13px] text-text-primary">{file.path}</span>
       {file.type === 'deleted' && (
         <span className="flex-shrink-0 rounded bg-status-error px-1.5 py-0.5 text-[10px] text-text-on-status-error">Deleted</span>
       )}
@@ -36,7 +36,7 @@ const FileRow = memo<FileRowProps>(({ file, isActive, onOpen }) => (
         <span className="flex-shrink-0 rounded bg-status-success px-1.5 py-0.5 text-[10px] text-text-on-status-success">New</span>
       )}
       {file.type === 'renamed' && (
-        <span className="flex-shrink-0 text-xs text-text-tertiary">from {file.oldPath}</span>
+        <span className="flex-shrink-0 font-mono text-xs text-text-tertiary">from {file.oldPath}</span>
       )}
     </div>
     <div className="relative z-10 pointer-events-none flex flex-shrink-0 items-center gap-1 text-xs tabular-nums">
