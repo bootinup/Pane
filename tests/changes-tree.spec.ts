@@ -454,3 +454,23 @@ test('active file selection is scope-gated, a manual collapse sticks, and refocu
   await expect(components).toHaveAttribute('aria-expanded', 'true');
   await expect(alpha).toHaveAttribute('aria-selected', 'true');
 });
+
+test('a wide persisted commits pane cannot squeeze the tree out of a side-by-side split', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('diff-panel-sidebar-width', '600');
+    localStorage.setItem('pane-detail-panel-width', '700');
+  });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await openTree(page);
+  const split = page.locator('.pane-review-split');
+  const list = page.locator('.pane-review-list');
+  const splitBox = await split.boundingBox();
+  const listBox = await list.boundingBox();
+  const stacked = await split.evaluate(element => getComputedStyle(element).flexDirection === 'column');
+  expect(stacked).toBe(false);
+  expect(splitBox && listBox && listBox.width).toBeLessThanOrEqual((splitBox?.width ?? 0) - 239);
+  const treeBox = await page.getByRole('tree', { name: 'Changed files' }).boundingBox();
+  expect(treeBox && treeBox.width).toBeGreaterThanOrEqual(200);
+  await expect(page.getByRole('treeitem', { name: 'Open diff for README.md' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});

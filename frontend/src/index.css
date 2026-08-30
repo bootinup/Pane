@@ -1101,6 +1101,12 @@ body.understory {
   container-type: inline-size;
 }
 
+/* Side-by-side: however the persisted width or the host resize land, the tree
+   always keeps at least 240px. */
+.pane-review-list {
+  max-width: calc(100% - 240px);
+}
+
 @container (max-width: 600px) {
   .pane-review-split {
     flex-direction: column;

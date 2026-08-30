@@ -115,8 +115,11 @@ const CombinedDiffView = memo(forwardRef<CombinedDiffViewHandle, CombinedDiffVie
     const handleMouseMove = (event: MouseEvent) => {
       const container = document.querySelector('.combined-diff-view');
       if (!container) return;
-      const width = event.clientX - container.getBoundingClientRect().left;
-      setSidebarWidth(Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width)));
+      const bounds = container.getBoundingClientRect();
+      const width = event.clientX - bounds.left;
+      // Never persist a width the current host cannot show beside a 240px tree.
+      const available = Math.min(MAX_SIDEBAR_WIDTH, bounds.width - 240);
+      setSidebarWidth(Math.max(MIN_SIDEBAR_WIDTH, Math.min(available, width)));
     };
     const handleMouseUp = () => setIsResizing(false);
     document.addEventListener('mousemove', handleMouseMove);
