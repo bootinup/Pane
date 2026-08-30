@@ -3218,6 +3218,10 @@ export class DatabaseService {
       updates.push("status_message = ?");
       values.push(data.status_message);
     }
+    if (data.worktree_path !== undefined) {
+      updates.push("worktree_path = ?");
+      values.push(data.worktree_path);
+    }
     if (data.folder_id !== undefined) {
       console.log(`[Database] Setting folder_id to: ${data.folder_id}`);
       updates.push("folder_id = ?");
