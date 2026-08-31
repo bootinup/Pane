@@ -304,9 +304,9 @@ const DiffPanel: React.FC<DiffPanelProps> = ({
             style={{ display: reviewMode === 'local' ? 'block' : 'none' }}
           >
             <CombinedDiffView
+              key={`${sessionId}:${isMainRepo ? 'main-repo' : 'worktree'}`}
               ref={combinedDiffRef}
               sessionId={sessionId}
-              selectedExecutions={[]}
               isGitOperationRunning={false}
               isMainRepo={isMainRepo}
               isVisible={isActive && reviewMode === 'local'}
