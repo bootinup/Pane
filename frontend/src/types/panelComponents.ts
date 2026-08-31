@@ -21,6 +21,7 @@ export interface PanelTabBarProps {
   onPanelSelect: (panel: ToolPanel) => void;
   onPanelClose: (panel: ToolPanel) => void;
   onPanelCreate: (type: ToolPanelType, options?: PanelCreateOptions) => void;
+  onShowExplorer: () => void;
   projectEnvironment?: ProjectEnvironment;
   context?: PanelContext;  // Optional context to filter available panels
   onToggleDetailPanel?: () => void;

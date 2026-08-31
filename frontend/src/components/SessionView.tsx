@@ -1018,6 +1018,11 @@ export const SessionView = memo(() => {
     [activeSession, addPanel, setActivePanelInStore, applyLayout]
   );
 
+  const handleShowExplorer = useCallback(async () => {
+    if (!filesPanel) await handlePanelCreate('explorer');
+    openInspector('files');
+  }, [filesPanel, handlePanelCreate, openInspector]);
+
   // --- SplitLayout callbacks ---
   const handleSizesChange = useCallback((splitNodeId: string, sizes: number[]) => {
     if (!activeSession) return;
@@ -1796,6 +1801,7 @@ export const SessionView = memo(() => {
           onPanelSelect={handlePanelSelect}
           onPanelClose={handlePanelClose}
           onPanelCreate={handlePanelCreate}
+          onShowExplorer={() => { void handleShowExplorer(); }}
           projectEnvironment={activeProjectEnvironment}
           onToggleDetailPanel={handleToggleDetailPanel}
           detailPanelVisible={detailVisible}

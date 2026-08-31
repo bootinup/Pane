@@ -245,6 +245,12 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
     },
     [mainRepoSessionId, addPanel, setActivePanelInStore]
   );
+
+  const handleShowExplorer = useCallback(async () => {
+    if (!filesPanel) await handlePanelCreate('explorer');
+    setInspectorTab('files');
+    setDetailVisible(true);
+  }, [filesPanel, handlePanelCreate]);
   
   // Expose this view's tab / inspector actions to the global hotkeys.
   const setProjectViewActions = useProjectViewActionsStore((state) => state.setActions);
@@ -381,6 +387,7 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
             onPanelSelect={handlePanelSelect}
             onPanelClose={handlePanelClose}
             onPanelCreate={handlePanelCreate}
+            onShowExplorer={() => { void handleShowExplorer(); }}
             projectEnvironment={projectEnvironment}
             context="project"
             onToggleDetailPanel={() => setDetailVisible(v => !v)}
