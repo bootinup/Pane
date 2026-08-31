@@ -7,10 +7,20 @@ import { execFile } from 'child_process';
 import { commandExecutor } from '../utils/commandExecutor';
 import { getCurrentWorktreeName } from '../utils/worktreeUtils';
 import { getAppDirectory } from '../utils/appDirectory';
+import { getUpdateCapabilities } from '../utils/updateCapabilities';
 
 const MAC_UPDATE_COMMAND = 'curl -fsSL https://runpane.com/install.sh | sh';
 
 export function registerUpdaterHandlers(ipcMain: IpcMain, { app, versionChecker }: AppServices): void {
+  ipcMain.handle('updater:get-capabilities', async () => ({
+    success: true,
+    data: await getUpdateCapabilities({
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      executablePath: process.execPath,
+    }),
+  }));
+
   // Version checking handlers
   ipcMain.handle('version:check-for-updates', async () => {
     try {
@@ -190,15 +200,6 @@ export function registerUpdaterHandlers(ipcMain: IpcMain, { app, versionChecker 
     }
   });
 
-  /**
-   * Temporary workaround pending Apple code signing:
-   * `quitAndInstall()` does not work on unsigned macOS builds because Gatekeeper
-   * quarantines the downloaded update, preventing it from replacing the running app.
-   * The frontend guards against calling this handler on macOS — users are directed to
-   * download and drag-install manually from GitHub instead. This handler remains in
-   * place for Windows (where auto-update works correctly) and as a no-op path for any
-   * unexpected macOS invocations until builds are signed with an Apple Developer ID.
-   */
   ipcMain.handle('updater:install-update', () => {
     try {
       if (!app.isPackaged && !process.env.TEST_UPDATES) {

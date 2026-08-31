@@ -448,6 +448,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Auto-updater
   updater: {
+    getCapabilities: (): Promise<IPCResponse> => invokeIpc('updater:get-capabilities'),
     checkAndDownload: (): Promise<IPCResponse> => invokeIpc('updater:check-and-download'),
     downloadUpdate: (): Promise<IPCResponse> => invokeIpc('updater:download-update'),
     installUpdate: (): Promise<IPCResponse> => invokeIpc('updater:install-update'),

@@ -41,6 +41,7 @@ import type { LeaderboardResponse, LeaderboardStatus, LeaderboardSubmitResult } 
 import type { CreateSessionRequest } from './session';
 import type { DetectedProjectConfig } from '../../../shared/types/projectConfig';
 import type { CloudVmState } from '../../../shared/types/cloud';
+import type { UpdateCapabilities } from '../../../shared/types/updater';
 import type {
   ProjectDashboardData,
   ProjectDashboardSessionUpdateEvent,
@@ -105,6 +106,7 @@ interface ElectronAPI {
   
   // Auto-updater
   updater: {
+    getCapabilities: () => Promise<IPCResponse<UpdateCapabilities>>;
     checkAndDownload: () => Promise<IPCResponse>;
     downloadUpdate: () => Promise<IPCResponse>;
     installUpdate: () => Promise<IPCResponse>;
