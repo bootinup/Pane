@@ -29,6 +29,7 @@ import { getRemoteFooterStatus } from '../utils/remoteRuntimePresentation';
 import { usePanelStore } from '../stores/panelStore';
 import { rollupAgentDisplayStatus, rollupSessionAgentState, toAgentDisplayStatus } from '../utils/agentStatus';
 import { createProjectById, getPinnedSessions, groupSessionsByProject } from '../utils/sessionOrdering';
+import { DiscordIcon } from './DiscordIcon';
 
 // --- Collapsed sidebar tooltip content ---
 
@@ -75,6 +76,7 @@ interface SidebarProps {
   onHelpClick: () => void;
   onDocsClick: () => void;
   onFeedbackClick: () => void;
+  onDiscordClick: () => void;
 }
 
 const REMOTE_DESKTOP_URL = 'https://remotedesktop.google.com/access';
@@ -91,7 +93,8 @@ const HelpCircleIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
-export function Sidebar({ onAboutClick, onSettingsClick, onRemoteSettingsClick, width, onResize, collapsed, onToggleCollapse, titleBarControlsSlot, onHelpClick, onDocsClick, onFeedbackClick }: SidebarProps) {
+export function Sidebar({ onAboutClick, onSettingsClick, onRemoteSettingsClick, width, onResize, collapsed, onToggleCollapse, titleBarControlsSlot, onHelpClick, onDocsClick, onFeedbackClick, onDiscordClick }: SidebarProps) {
+  const useCompactFooterActions = width < 260;
   const hotkeys = useHotkeyStore((s) => s.hotkeys);
   const hotkeyDisplay = useCallback((id: string) => {
     const keys = hotkeys.get(id)?.keys;
@@ -330,6 +333,12 @@ export function Sidebar({ onAboutClick, onSettingsClick, onRemoteSettingsClick, 
           label: 'Feedback',
           icon: MessageSquare,
           onClick: onFeedbackClick
+        },
+        {
+          id: 'discord',
+          label: 'Discord',
+          icon: DiscordIcon,
+          onClick: onDiscordClick
         },
         {
           id: 'docs',
@@ -738,10 +747,20 @@ export function Sidebar({ onAboutClick, onSettingsClick, onRemoteSettingsClick, 
           <button
             type="button"
             onClick={onFeedbackClick}
+            aria-label="Feedback"
             className="flex h-8 flex-shrink-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring-subtle"
           >
             <MessageSquare className="h-3.5 w-3.5" />
-            <span>Feedback</span>
+            {!useCompactFooterActions && <span>Feedback</span>}
+          </button>
+          <button
+            type="button"
+            onClick={onDiscordClick}
+            aria-label="Discord"
+            className="flex h-8 flex-shrink-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring-subtle"
+          >
+            <DiscordIcon className="h-3.5 w-3.5" />
+            {!useCompactFooterActions && <span>Discord</span>}
           </button>
           <IconButton
             aria-label="Settings"
