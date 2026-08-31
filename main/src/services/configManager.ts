@@ -28,7 +28,7 @@ const DEFAULT_POSTHOG_HOST = 'https://runpane.com/api/c';
 
 function defaultAnalyticsConfig(): NonNullable<AppConfig['analytics']> {
   return {
-    enabled: false,
+    enabled: true,
     posthogApiKey: DEFAULT_POSTHOG_API_KEY,
     posthogHost: DEFAULT_POSTHOG_HOST
   };
@@ -473,7 +473,7 @@ export class ConfigManager extends EventEmitter {
   }
 
   isAnalyticsEnabled(): boolean {
-    return this.config.analytics?.enabled ?? false; // Opt-in: default to false
+    return this.config.analytics?.enabled ?? true;
   }
 
   getAnalyticsDistinctId(): string | undefined {
