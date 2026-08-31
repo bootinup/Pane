@@ -342,10 +342,11 @@ function App() {
   useEffect(() => {
     if (!appConfig || hasCheckedAnalyticsDefault || analyticsCheckStarted.current) return;
     analyticsCheckStarted.current = true;
+    let cancelled = false;
 
     const checkAnalyticsDefault = async () => {
       if (!window.electron?.invoke) {
-        setHasCheckedAnalyticsDefault(true);
+        if (!cancelled) setHasCheckedAnalyticsDefault(true);
         return;
       }
 
@@ -359,12 +360,6 @@ function App() {
 
         if (!hasLegacyChoice && !hasAppliedDefault) {
           const identity = await resolveAnalyticsIdentity();
-
-          if (appConfig.analytics?.enabled !== true) {
-            await useConfigStore.getState().updateConfig({
-              analytics: { ...appConfig.analytics, enabled: true },
-            });
-          }
 
           initPostHog({
             enabled: true,
@@ -383,15 +378,24 @@ function App() {
           await captureFirstOpenOnce(identity);
           flushPendingEvents();
           await window.electron.invoke('preferences:set', 'analytics_default_applied', 'true');
+          if (appConfig.analytics?.enabled !== true) {
+            await useConfigStore.getState().updateConfig({
+              analytics: { ...appConfig.analytics, enabled: true },
+            });
+          }
         }
       } catch (error) {
         console.error('[App] Error applying analytics default:', error);
       } finally {
-        setHasCheckedAnalyticsDefault(true);
+        if (!cancelled) setHasCheckedAnalyticsDefault(true);
       }
     };
 
     void checkAnalyticsDefault();
+    return () => {
+      cancelled = true;
+      analyticsCheckStarted.current = false;
+    };
   }, [appConfig, captureFirstOpenOnce, hasCheckedAnalyticsDefault, resolveAnalyticsIdentity]);
 
   // Initialize PostHog after config loads, then start forwarding main-process events.
@@ -515,10 +519,11 @@ function App() {
   useEffect(() => {
     if (hasCheckedOnboarding || onboardingCheckStarted.current || !hasCheckedAnalyticsDefault) return;
     onboardingCheckStarted.current = true;
+    let cancelled = false;
 
     const checkOnboarding = async () => {
       if (!window.electron?.invoke) {
-        setHasCheckedOnboarding(true);
+        if (!cancelled) setHasCheckedOnboarding(true);
         return;
       }
       try {
@@ -532,17 +537,21 @@ function App() {
           const projectsRes = await API.projects.getAll();
           const hasExistingProjects = projectsRes.success && projectsRes.data && projectsRes.data.length > 0;
           if (!hasExistingProjects) {
-            setIsOnboardingOpen(true);
+            if (!cancelled) setIsOnboardingOpen(true);
           }
         }
       } catch (error) {
         console.error('[App] Error checking onboarding:', error);
       } finally {
-        setHasCheckedOnboarding(true);
+        if (!cancelled) setHasCheckedOnboarding(true);
       }
     };
 
-    checkOnboarding();
+    void checkOnboarding();
+    return () => {
+      cancelled = true;
+      onboardingCheckStarted.current = false;
+    };
   }, [hasCheckedOnboarding, hasCheckedAnalyticsDefault]);
 
   useEffect(() => {
@@ -668,11 +677,12 @@ function App() {
   // Check for resumable sessions on startup (auto-resume feature)
   useEffect(() => {
     if (!isLoaded) return;
+    let cancelled = false;
 
     const checkResumableSessions = async () => {
       try {
         const result = await window.electronAPI.sessions.getResumable();
-        if (result.success && result.data && Array.isArray(result.data) && result.data.length > 0) {
+        if (!cancelled && result.success && result.data && Array.isArray(result.data) && result.data.length > 0) {
           setResumableSessions(result.data);
           setIsResumeDialogOpen(true);
         }
@@ -681,7 +691,10 @@ function App() {
       }
     };
 
-    checkResumableSessions();
+    void checkResumableSessions();
+    return () => {
+      cancelled = true;
+    };
   }, [isLoaded]);
 
   const loadNextPendingPermission = useCallback(async () => {

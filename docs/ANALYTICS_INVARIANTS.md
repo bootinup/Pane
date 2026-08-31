@@ -52,6 +52,10 @@ The event should also set person properties when the identity is known:
 - `app_version`
 - `platform`
 
+Privacy Settings must disclose that analytics can be associated with locally
+available GitHub or Git account details, including a username or email. Do not
+describe this telemetry as anonymous while those person properties are sent.
+
 ## Opt-Out Is Still Identified
 
 Capture `analytics_opted_out` with identity context before disabling analytics.
