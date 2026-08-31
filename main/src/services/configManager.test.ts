@@ -28,7 +28,15 @@ describe('ConfigManager appearance persistence', () => {
     });
     expect(JSON.parse(await fs.readFile(configPath, 'utf8'))).toMatchObject({
       appearanceMode: 'system', theme: 'light-rounded', systemLightTheme: 'light-rounded', systemDarkTheme: 'dark',
+      analytics: { enabled: true },
     });
+  });
+
+  it('preserves an existing analytics opt-out', async () => {
+    await fs.writeFile(configPath, JSON.stringify({ analytics: { enabled: false } }));
+    const manager = new ConfigManager();
+    await manager.initialize();
+    expect(manager.getConfig().analytics?.enabled).toBe(false);
   });
 
   it('migrates a legacy theme once', async () => {
