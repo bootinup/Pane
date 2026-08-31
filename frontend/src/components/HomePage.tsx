@@ -170,6 +170,63 @@ function OpenProjectCard({
   );
 }
 
+function DiscordBanner() {
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.electron?.invoke('preferences:get', HIDE_DISCORD_PREFERENCE)
+      .then((result) => {
+        if (!cancelled) setIsVisible(result?.success === true && result.data !== 'true');
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const dismiss = useCallback(() => {
+    setIsVisible(false);
+    void window.electron?.invoke('preferences:set', HIDE_DISCORD_PREFERENCE, 'true');
+  }, []);
+
+  const handleJoin = useCallback(async () => {
+    capture('discord_clicked', { source: 'home_banner' });
+    try {
+      const result = await window.electronAPI.openExternal(DISCORD_INVITE_URL);
+      if (result.success) dismiss();
+    } catch {
+      // Keep the invitation available so the user can retry.
+    }
+  }, [dismiss]);
+
+  if (!isVisible) return null;
+
+  return (
+    <div
+      role="region"
+      aria-label="Pane Discord community"
+      className="mx-auto flex w-full max-w-2xl items-center gap-3 rounded-lg border border-border-secondary bg-surface-primary px-3 py-2 text-sm shadow-sm"
+    >
+      <DiscordIcon className="h-4 w-4 flex-shrink-0 text-discord" />
+      <span className="min-w-0 flex-1 truncate text-text-secondary">Join the Pane community on Discord.</span>
+      <button
+        type="button"
+        onClick={() => void handleJoin()}
+        className="flex-shrink-0 rounded-md bg-discord px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-discord-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring-subtle"
+      >
+        Join
+      </button>
+      <button
+        type="button"
+        onClick={dismiss}
+        aria-label="Dismiss Discord invitation"
+        className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring-subtle"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
 export function HomePage() {
   const { theme, appearance, activeSystemSlot, setTheme } = useTheme();
   const homeThemeOptions = themeOptionsForSlot(appearance.appearanceMode === 'fixed' ? 'any' : activeSystemSlot ?? 'light');
@@ -183,7 +240,6 @@ export function HomePage() {
   const [platform, setPlatform] = useState<string>('');
   const [availableShells, setAvailableShells] = useState<Array<{ id: string; name: string; path: string }>>([]);
   const [preferredShell, setPreferredShell] = useState<string>('auto');
-  const [showDiscordBanner, setShowDiscordBanner] = useState(false);
 
   const uiScale = config?.uiScale ?? 1.0;
 
@@ -219,27 +275,6 @@ export function HomePage() {
       setPreferredShell(config.preferredShell);
     }
   }, [config?.preferredShell]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void window.electron?.invoke('preferences:get', HIDE_DISCORD_PREFERENCE)
-      .then((result) => {
-        if (!cancelled) setShowDiscordBanner(result?.success === true && result.data !== 'true');
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
-
-  const hideDiscordBanner = useCallback(() => {
-    setShowDiscordBanner(false);
-    void window.electron?.invoke('preferences:set', HIDE_DISCORD_PREFERENCE, 'true');
-  }, []);
-
-  const handleJoinDiscord = useCallback(() => {
-    capture('discord_clicked', { source: 'home_banner' });
-    void window.electronAPI.openExternal(DISCORD_INVITE_URL);
-    hideDiscordBanner();
-  }, [hideDiscordBanner]);
 
   useEffect(() => {
     void loadProjects();
@@ -291,31 +326,7 @@ export function HomePage() {
     <div className="flex-1 overflow-y-auto bg-bg-primary px-8 py-10">
       <div className="flex min-h-full items-center">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
-          {showDiscordBanner && (
-            <div
-              role="region"
-              aria-label="Pane Discord community"
-              className="mx-auto flex w-full max-w-2xl items-center gap-3 rounded-lg border border-border-secondary bg-surface-primary px-3 py-2 text-sm shadow-sm"
-            >
-              <DiscordIcon className="h-4 w-4 flex-shrink-0 text-discord" />
-              <span className="min-w-0 flex-1 truncate text-text-secondary">Join the Pane community on Discord.</span>
-              <button
-                type="button"
-                onClick={handleJoinDiscord}
-                className="flex-shrink-0 rounded-md bg-discord px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-discord-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring-subtle"
-              >
-                Join
-              </button>
-              <button
-                type="button"
-                onClick={hideDiscordBanner}
-                aria-label="Dismiss Discord invitation"
-                className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring-subtle"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          )}
+          <DiscordBanner />
           <div className="flex justify-start pl-6">
             <pre className="max-w-full overflow-hidden whitespace-pre text-left font-mono text-[10px] leading-[0.95] tracking-tight text-text-tertiary sm:text-[11px]">
               {paneAscii}

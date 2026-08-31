@@ -71,6 +71,7 @@ type ElectronApiMockOptions = {
   activeProjectId?: number | null;
   paneChatAgentChangeDelayMs?: number;
   feedbackOutcome?: 'success' | 'failure';
+  openExternalOutcome?: 'success' | 'failure';
 };
 
 export async function installElectronApiMock(page: Page, options: ElectronApiMockOptions = {}) {
@@ -432,6 +433,9 @@ export async function installElectronApiMock(page: Page, options: ElectronApiMoc
       checkForUpdates: () => success({ hasUpdate: false }),
       openExternal: (url: string) => {
         openedExternalUrls.push(url);
+        if (mockOptions.openExternalOutcome === 'failure') {
+          return Promise.resolve({ success: false, error: 'No browser is available.' });
+        }
         // Matches preload's Promise<IPCResponse> contract; callers await this result.
         return success();
       },

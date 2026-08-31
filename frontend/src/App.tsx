@@ -84,7 +84,6 @@ function App() {
   const [isUpdateDialogOpen, setIsUpdateDialogOpen] = useState(false);
   const [updateVersionInfo, setUpdateVersionInfo] = useState<VersionUpdateInfo | null>(null);
   const [currentPermissionRequest, setCurrentPermissionRequest] = useState<PanePermissionRequest | null>(null);
-  const [hasCheckedWelcome, setHasCheckedWelcome] = useState(false);
   const [hasResolvedStartupDialogs, setHasResolvedStartupDialogs] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isSupportPaneOpen, setIsSupportPaneOpen] = useState(false);
@@ -96,6 +95,7 @@ function App() {
   const analyticsConsentOpenRef = useRef(false);
   const appFirstOpenedCaptured = useRef(false);
   const onboardingCheckStarted = useRef(false);
+  const welcomeCheckStarted = useRef(false);
   const supportPromptCheckStarted = useRef(false);
 
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -547,13 +547,15 @@ function App() {
     // Show the welcome screen intelligently based on user state.
     // This should only run once when the app is loaded, not when sessions change
     // Don't show welcome until onboarding check has completed and its dialog (if any) is closed
-    if (!isLoaded || hasCheckedWelcome || isAnalyticsConsentOpen || !hasCheckedOnboarding || isOnboardingOpen) {
+    if (!isLoaded || welcomeCheckStarted.current || isAnalyticsConsentOpen || !hasCheckedOnboarding || isOnboardingOpen) {
       return;
     }
+    welcomeCheckStarted.current = true;
+    let cancelled = false;
 
     const checkInitialState = async () => {
       if (!window.electron?.invoke) {
-        setHasResolvedStartupDialogs(true);
+        if (!cancelled) setHasResolvedStartupDialogs(true);
         return;
       }
 
@@ -582,7 +584,7 @@ function App() {
 
 
             if (isFirstTimeUser || isReturningUserWithNoData) {
-              setIsWelcomeOpen(true);
+              if (!cancelled) setIsWelcomeOpen(true);
               // Mark that welcome has been shown at least once
               await window.electron.invoke('preferences:set', 'welcome_shown', 'true');
             }
@@ -592,14 +594,16 @@ function App() {
         }
 
       } finally {
-        setHasResolvedStartupDialogs(true);
+        if (!cancelled) setHasResolvedStartupDialogs(true);
       }
     };
 
-    // Set the flag first to prevent re-runs
-    setHasCheckedWelcome(true);
-    checkInitialState();
-  }, [isLoaded, hasCheckedWelcome, isAnalyticsConsentOpen, hasCheckedOnboarding, isOnboardingOpen, completedOnboardingThisSession]);
+    void checkInitialState();
+    return () => {
+      cancelled = true;
+      welcomeCheckStarted.current = false;
+    };
+  }, [isLoaded, isAnalyticsConsentOpen, hasCheckedOnboarding, isOnboardingOpen, completedOnboardingThisSession]);
 
   useEffect(() => {
     if (
@@ -617,6 +621,7 @@ function App() {
     }
 
     supportPromptCheckStarted.current = true;
+    let cancelled = false;
 
     const checkDeferredSupportPrompt = async () => {
       if (!window.electron?.invoke || !window.electronAPI?.onboarding?.detectEnvironment) {
@@ -638,13 +643,17 @@ function App() {
           source: 'future_launch',
           gh_status: 'gh_ready',
         });
-        setIsSupportPaneOpen(true);
+        if (!cancelled) setIsSupportPaneOpen(true);
       } catch (error) {
         console.error('[App] Failed to check deferred onboarding support prompt:', error);
       }
     };
 
     void checkDeferredSupportPrompt();
+    return () => {
+      cancelled = true;
+      supportPromptCheckStarted.current = false;
+    };
   }, [
     isLoaded,
     hasCheckedAnalyticsConsent,
