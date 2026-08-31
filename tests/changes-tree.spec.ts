@@ -471,6 +471,10 @@ test('a wide persisted commits pane cannot squeeze the tree out of a side-by-sid
   expect(splitBox && listBox && listBox.width).toBeLessThanOrEqual((splitBox?.width ?? 0) - 239);
   const treeBox = await page.getByRole('tree', { name: 'Changed files' }).boundingBox();
   expect(treeBox && treeBox.width).toBeGreaterThanOrEqual(200);
+  // The panel fills the inspector rail instead of sizing to its content.
+  const hostBox = await page.locator('.pane-inspector-host:visible').boundingBox();
+  const viewBox = await page.locator('.combined-diff-view').boundingBox();
+  expect(hostBox && viewBox && viewBox.width).toBeGreaterThanOrEqual((hostBox?.width ?? 0) - 8);
   await expect(page.getByRole('treeitem', { name: 'Open diff for README.md' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

@@ -1101,6 +1101,13 @@ body.understory {
   container-type: inline-size;
 }
 
+/* The host is a flex row with one hosted panel: the panel fills the rail
+   instead of sizing to its content, whatever width the user drags the rail to. */
+.pane-inspector-host > * {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* Side-by-side: however the persisted width or the host resize land, the tree
    always keeps at least 240px. */
 .pane-review-list {
