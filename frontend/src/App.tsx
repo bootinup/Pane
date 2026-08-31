@@ -25,7 +25,7 @@ import { UpdateDialog } from './components/UpdateDialog';
 import { MainProcessLogger } from './components/MainProcessLogger';
 import { ErrorDialog } from './components/ErrorDialog';
 import { PermissionDialog } from './components/PermissionDialog';
-import { DiscordPopup } from './components/DiscordPopup';
+import { DISCORD_INVITE_URL } from './components/DiscordIcon';
 import { ResumeSessionsDialog } from './components/ResumeSessionsDialog';
 import { useErrorStore } from './stores/errorStore';
 import { useSessionStore } from './stores/sessionStore';
@@ -75,12 +75,6 @@ const preferenceResponseSchema = boundary.object({
   data: boundary.optional(boundary.string),
   error: boundary.optional(boundary.string),
 });
-const lastOpenResponseSchema = boundary.object({
-  success: boundary.boolean,
-  data: boundary.optional(boundary.object({ discord_shown: boundary.optional(boundary.boolean) })),
-  error: boundary.optional(boundary.string),
-});
-
 function App() {
   const [isWelcomeOpen, setIsWelcomeOpen] = useState(false);
   const [isAnalyticsConsentOpen, setIsAnalyticsConsentOpen] = useState(false);
@@ -90,7 +84,6 @@ function App() {
   const [isUpdateDialogOpen, setIsUpdateDialogOpen] = useState(false);
   const [updateVersionInfo, setUpdateVersionInfo] = useState<VersionUpdateInfo | null>(null);
   const [currentPermissionRequest, setCurrentPermissionRequest] = useState<PanePermissionRequest | null>(null);
-  const [isDiscordOpen, setIsDiscordOpen] = useState(false);
   const [hasCheckedWelcome, setHasCheckedWelcome] = useState(false);
   const [hasResolvedStartupDialogs, setHasResolvedStartupDialogs] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
@@ -551,7 +544,7 @@ function App() {
   }, [hasCheckedOnboarding, hasCheckedAnalyticsConsent, isAnalyticsConsentOpen]);
 
   useEffect(() => {
-    // Show welcome screen and Discord popup intelligently based on user state
+    // Show the welcome screen intelligently based on user state.
     // This should only run once when the app is loaded, not when sessions change
     // Don't show welcome until onboarding check has completed and its dialog (if any) is closed
     if (!isLoaded || hasCheckedWelcome || isAnalyticsConsentOpen || !hasCheckedOnboarding || isOnboardingOpen) {
@@ -568,20 +561,12 @@ function App() {
         // Get preferences from database
         const hideWelcomeResult = decodeOptionalBoundary(await window.electron.invoke('preferences:get', 'hide_welcome'), preferenceResponseSchema);
         const welcomeShownResult = decodeOptionalBoundary(await window.electron.invoke('preferences:get', 'welcome_shown'), preferenceResponseSchema);
-        const hideDiscordResult = decodeOptionalBoundary(await window.electron.invoke('preferences:get', 'hide_discord'), preferenceResponseSchema);
-
         const hideWelcome = hideWelcomeResult?.data === 'true';
         const hasSeenWelcome = welcomeShownResult?.data === 'true';
-        const hideDiscord = hideDiscordResult?.data === 'true';
 
-
-        // Track whether we're showing the welcome screen
-        let welcomeScreenShown = false;
 
         // If user explicitly said "don't show again", respect that preference
-        if (hideWelcome || completedOnboardingThisSession) {
-          welcomeScreenShown = false;
-        } else {
+        if (!hideWelcome && !completedOnboardingThisSession) {
           try {
             const projectsResponse = await API.projects.getAll();
             const hasProjects = projectsResponse.success && projectsResponse.data && projectsResponse.data.length > 0;
@@ -598,58 +583,14 @@ function App() {
 
             if (isFirstTimeUser || isReturningUserWithNoData) {
               setIsWelcomeOpen(true);
-              welcomeScreenShown = true;
               // Mark that welcome has been shown at least once
               await window.electron.invoke('preferences:set', 'welcome_shown', 'true');
-            } else {
-              welcomeScreenShown = false;
             }
           } catch (error) {
             console.error('Error checking initial state:', error);
-            welcomeScreenShown = false;
           }
         }
 
-        // If welcome screen is not shown and Discord hasn't been hidden, check if we should show Discord popup
-        if (!welcomeScreenShown && !hideDiscord) {
-
-          try {
-            // Get the last app open to see if Discord was already shown
-            const result = decodeOptionalBoundary(await window.electron.invoke('app:get-last-open'), lastOpenResponseSchema);
-
-            if (result?.success && result.data) {
-              const lastOpen = result.data;
-
-              // Show Discord popup if it hasn't been shown yet
-              if (!lastOpen.discord_shown) {
-                setIsDiscordOpen(true);
-                // Mark that we're showing the Discord popup
-                if (window.electron?.invoke) {
-                  await window.electron.invoke('app:update-discord-shown');
-                }
-              } else {
-                // Discord already shown
-              }
-            } else {
-              // No previous app open - show Discord popup
-              setIsDiscordOpen(true);
-              // Will update discord shown status after recording app open
-            }
-          } catch {
-            // Error checking Discord popup
-          }
-
-          // Record this app open
-          if (window.electron?.invoke) {
-            await window.electron.invoke('app:record-open', hideWelcome, false);
-
-            // If we showed Discord popup and there was no previous app open, update the status
-            const result = decodeOptionalBoundary(await window.electron.invoke('app:get-last-open'), lastOpenResponseSchema);
-            if (!result?.data?.discord_shown && isDiscordOpen) {
-              await window.electron.invoke('app:update-discord-shown');
-            }
-          }
-        }
       } finally {
         setHasResolvedStartupDialogs(true);
       }
@@ -658,7 +599,7 @@ function App() {
     // Set the flag first to prevent re-runs
     setHasCheckedWelcome(true);
     checkInitialState();
-  }, [isLoaded, hasCheckedWelcome, isAnalyticsConsentOpen, hasCheckedOnboarding, isOnboardingOpen, completedOnboardingThisSession, isDiscordOpen]);
+  }, [isLoaded, hasCheckedWelcome, isAnalyticsConsentOpen, hasCheckedOnboarding, isOnboardingOpen, completedOnboardingThisSession]);
 
   useEffect(() => {
     if (
@@ -670,8 +611,7 @@ function App() {
       isOnboardingOpen ||
       completedOnboardingThisSession ||
       !hasResolvedStartupDialogs ||
-      isWelcomeOpen ||
-      isDiscordOpen
+      isWelcomeOpen
     ) {
       return;
     }
@@ -714,10 +654,7 @@ function App() {
     completedOnboardingThisSession,
     hasResolvedStartupDialogs,
     isWelcomeOpen,
-    isDiscordOpen,
   ]);
-
-  // Discord popup logic is now combined with welcome screen logic above
 
   // Check for resumable sessions on startup (auto-resume feature)
   useEffect(() => {
@@ -852,6 +789,10 @@ function App() {
             onHelpClick={() => setIsHelpOpen(true)}
             onDocsClick={() => setIsDocsOpen(true)}
             onFeedbackClick={() => setIsFeedbackOpen(true)}
+            onDiscordClick={() => {
+              capture('discord_clicked', { source: 'sidebar' });
+              void window.electronAPI.openExternal(DISCORD_INVITE_URL);
+            }}
           />
         </div>
         <SessionView />
@@ -910,10 +851,6 @@ function App() {
           request={currentPermissionRequest}
           onRespond={handlePermissionResponse}
           session={currentPermissionRequest ? sessions.find(s => s.id === currentPermissionRequest.sessionId) : undefined}
-        />
-        <DiscordPopup
-          isOpen={isDiscordOpen}
-          onClose={() => setIsDiscordOpen(false)}
         />
         <ResumeSessionsDialog
           isOpen={isResumeDialogOpen}
