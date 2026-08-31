@@ -12,7 +12,6 @@ import { Sidebar } from './components/Sidebar';
 import { SessionView } from './components/SessionView';
 import Welcome from './components/Welcome';
 import Help from './components/Help';
-import { AnalyticsNotice } from './components/AnalyticsNotice';
 import OnboardingDialog, {
   ONBOARDING_GH_PROMPT_SHOWN_PREFERENCE,
   ONBOARDING_REPO_SETUP_PREFERENCE,
@@ -48,10 +47,8 @@ import {
   aliasInstallIdentity,
   aliasWebVisitor,
   capture,
-  captureAndOptOut,
   captureAppFirstOpened,
   captureUnconditionally,
-  discardPendingEvents,
   flushPendingEvents,
   initPostHog,
   posthog,
@@ -79,8 +76,6 @@ const preferenceResponseSchema = boundary.object({
 });
 function App() {
   const [isWelcomeOpen, setIsWelcomeOpen] = useState(false);
-  const [isAnalyticsNoticeOpen, setIsAnalyticsNoticeOpen] = useState(false);
-  const [isAnalyticsNoticeSubmitting, setIsAnalyticsNoticeSubmitting] = useState(false);
   const [hasCheckedAnalyticsDefault, setHasCheckedAnalyticsDefault] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
@@ -92,7 +87,6 @@ function App() {
   const [isSupportPaneOpen, setIsSupportPaneOpen] = useState(false);
   const [hasCheckedOnboarding, setHasCheckedOnboarding] = useState(false);
   const [completedOnboardingThisSession, setCompletedOnboardingThisSession] = useState(false);
-  const [analyticsIdentity, setAnalyticsIdentity] = useState<AnalyticsIdentity | undefined>();
   const analyticsCheckStarted = useRef(false);
   const analyticsIdentityPromise = useRef<Promise<AnalyticsIdentity | undefined> | null>(null);
   const appFirstOpenedCaptured = useRef(false);
@@ -128,7 +122,7 @@ function App() {
   const { currentError, clearError } = useErrorStore();
   const { sessions, isLoaded } = useSessionStore();
   const activeSessionId = useSessionStore(state => state.activeSessionId);
-  const { fetchConfig, config: appConfig, updateConfig } = useConfigStore();
+  const { fetchConfig, config: appConfig } = useConfigStore();
   const terminalShortcuts = appConfig?.terminalShortcuts ?? EMPTY_TERMINAL_SHORTCUTS;
   const { isVisible: shortcutHintsVisible } = useShortcutHintsOverlay();
   useFocusedSurfaceScrolling(activeSessionId);
@@ -322,7 +316,6 @@ function App() {
         try {
           const identityResult = await window.electronAPI?.analytics?.getIdentity?.();
           if (identityResult?.success && identityResult.data) {
-            setAnalyticsIdentity(identityResult.data);
             return identityResult.data;
           }
         } catch (error) {
@@ -357,14 +350,14 @@ function App() {
       }
 
       try {
-        const [legacyConsentResult, noticeResult] = await Promise.all([
+        const [legacyConsentResult, defaultAppliedResult] = await Promise.all([
           window.electron.invoke('preferences:get', 'analytics_consent_shown'),
-          window.electron.invoke('preferences:get', 'analytics_default_notice_shown'),
+          window.electron.invoke('preferences:get', 'analytics_default_applied'),
         ]);
         const hasLegacyChoice = decodeOptionalBoundary(legacyConsentResult, preferenceResponseSchema)?.data === 'true';
-        const hasShownNotice = decodeOptionalBoundary(noticeResult, preferenceResponseSchema)?.data === 'true';
+        const hasAppliedDefault = decodeOptionalBoundary(defaultAppliedResult, preferenceResponseSchema)?.data === 'true';
 
-        if (!hasLegacyChoice && !hasShownNotice) {
+        if (!hasLegacyChoice && !hasAppliedDefault) {
           const identity = await resolveAnalyticsIdentity();
 
           if (appConfig.analytics?.enabled !== true) {
@@ -386,12 +379,10 @@ function App() {
             void window.electronAPI?.analytics?.redeemAttribution?.();
           }
 
-          await captureUnconditionally('analytics_notice_shown', { experiment: 'analytics_default_on' }, identity);
           await captureUnconditionally('analytics_default_enabled', { experiment: 'analytics_default_on' }, identity);
           await captureFirstOpenOnce(identity);
           flushPendingEvents();
-          await window.electron.invoke('preferences:set', 'analytics_default_notice_shown', 'true');
-          setIsAnalyticsNoticeOpen(true);
+          await window.electron.invoke('preferences:set', 'analytics_default_applied', 'true');
         }
       } catch (error) {
         console.error('[App] Error applying analytics default:', error);
@@ -416,11 +407,11 @@ function App() {
       let consentDecided = false;
 
       try {
-        const [legacyConsentResult, noticeResult] = await Promise.all([
+        const [legacyConsentResult, defaultAppliedResult] = await Promise.all([
           window.electron?.invoke?.('preferences:get', 'analytics_consent_shown'),
-          window.electron?.invoke?.('preferences:get', 'analytics_default_notice_shown'),
+          window.electron?.invoke?.('preferences:get', 'analytics_default_applied'),
         ]);
-        consentDecided = [legacyConsentResult, noticeResult].some((result) =>
+        consentDecided = [legacyConsentResult, defaultAppliedResult].some((result) =>
           decodeOptionalBoundary(result, preferenceResponseSchema)?.data === 'true'
         );
       } catch (error) {
@@ -785,24 +776,6 @@ function App() {
     }
   }, [loadNextPendingPermission]);
 
-  const optOutFromAnalyticsNotice = useCallback(async () => {
-    if (!appConfig || isAnalyticsNoticeSubmitting) return;
-    setIsAnalyticsNoticeSubmitting(true);
-    try {
-      const identity = analyticsIdentity ?? await resolveAnalyticsIdentity();
-      await captureAndOptOut('analytics_opted_out', { source: 'default_on_notice' }, identity);
-      discardPendingEvents();
-      await updateConfig({
-        analytics: { ...appConfig.analytics, enabled: false },
-      });
-      setIsAnalyticsNoticeOpen(false);
-    } catch (error) {
-      console.error('[App] Failed to opt out from analytics notice:', error);
-    } finally {
-      setIsAnalyticsNoticeSubmitting(false);
-    }
-  }, [analyticsIdentity, appConfig, isAnalyticsNoticeSubmitting, resolveAnalyticsIdentity, updateConfig]);
-
   return (
     <ContextMenuProvider>
       <div className="pane-app-shell h-screen flex flex-col overflow-hidden bg-bg-primary">
@@ -847,16 +820,6 @@ function App() {
           }}
           onUpdate={handleUpdateRequest}
           onSendFeedback={() => setIsFeedbackOpen(true)}
-        />
-        <AnalyticsNotice
-          isOpen={isAnalyticsNoticeOpen}
-          isSubmitting={isAnalyticsNoticeSubmitting}
-          onDismiss={() => setIsAnalyticsNoticeOpen(false)}
-          onOpenSettings={() => {
-            setIsAnalyticsNoticeOpen(false);
-            openSettings({ category: 'privacy', setting: 'analytics' });
-          }}
-          onOptOut={() => void optOutFromAnalyticsNotice()}
         />
         <OnboardingDialog
           isOpen={isOnboardingOpen}

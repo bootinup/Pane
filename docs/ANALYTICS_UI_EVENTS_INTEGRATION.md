@@ -307,6 +307,6 @@ All backend infrastructure is complete. Frontend developers should:
 4. Test with verbose logging enabled to verify events are tracked
 
 Product analytics are enabled by default for new and previously undecided
-installs, with a first-run disclosure and a visible opt-out in Privacy Settings.
-Pane does not collect prompts, code, or file paths, and capture stops after an
-opt-out.
+installs. Privacy Settings discloses the default and provides the visible
+opt-out. Pane does not collect prompts, code, or file paths, and capture stops
+after an opt-out.

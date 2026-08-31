@@ -39,7 +39,7 @@ function parsePostHogBody(bodyText: string): CapturedPostHogEvent & { batch?: Ca
   }
 }
 
-test('undecided installs default on, disclose analytics, and can opt out in one click', async ({ page }) => {
+test('undecided installs default on and Settings discloses the one-click opt-out', async ({ page }) => {
   const identity = {
     distinctId: 'install:install_default_e2e',
     installId: 'install_default_e2e',
@@ -68,7 +68,7 @@ test('undecided installs default on, disclose analytics, and can opt out in one 
 
   await installElectronApiMock(page, {
     analyticsConsentShown: false,
-    initialPreferences: { analytics_default_notice_shown: 'false' },
+    initialPreferences: { analytics_default_applied: 'false' },
     analyticsIdentity: identity,
     initialConfig: {
       analytics: {
@@ -90,25 +90,29 @@ test('undecided installs default on, disclose analytics, and can opt out in one 
 
   await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-  await expect(page.getByRole('complementary', { name: 'Analytics notice' })).toBeVisible({ timeout: 10000 });
   await expect.poll(() => parseCapturedEvents(requests).map((event) => event.event)).toEqual(
-    expect.arrayContaining(['analytics_notice_shown', 'analytics_default_enabled', 'app_first_opened'])
+    expect.arrayContaining(['analytics_default_enabled', 'app_first_opened'])
   );
 
-  await page.getByRole('button', { name: 'Turn off analytics' }).click();
+  await page.getByRole('button', { name: 'Settings' }).first().click();
+  await page.getByRole('button', { name: 'Privacy', exact: true }).click();
+  await expect(page.getByText('Product analytics are on by default.')).toBeVisible();
+  await expect(page.getByRole('switch', { name: 'Allow product analytics' })).toBeChecked();
+  await expect.poll(() => parseCapturedEvents(requests).map((event) => event.event)).toContain('analytics_settings_disclosure_viewed');
+
+  await page.getByRole('switch', { name: 'Allow product analytics' }).click();
 
   await expect.poll(() => parseCapturedEvents(requests).map((event) => event.event)).toEqual(
-    expect.arrayContaining(['analytics_notice_shown', 'analytics_default_enabled', 'app_first_opened', 'analytics_opted_out'])
+    expect.arrayContaining(['analytics_default_enabled', 'app_first_opened', 'analytics_settings_disclosure_viewed', 'analytics_opted_out'])
   );
-  await expect(page.getByRole('complementary', { name: 'Analytics notice' })).toBeHidden();
+  await expect(page.getByRole('switch', { name: 'Allow product analytics' })).not.toBeChecked();
 
   const events = parseCapturedEvents(requests);
-  const noticeShown = events.find((event) => event.event === 'analytics_notice_shown');
   const defaultEnabled = events.find((event) => event.event === 'analytics_default_enabled');
   const firstOpened = events.find((event) => event.event === 'app_first_opened');
   const optedOut = events.find((event) => event.event === 'analytics_opted_out');
 
-  for (const event of [noticeShown, defaultEnabled, firstOpened, optedOut]) {
+  for (const event of [defaultEnabled, firstOpened, optedOut]) {
     expect(event?.properties).toMatchObject({
       distinct_id: identity.distinctId,
       install_id: identity.installId,
@@ -129,10 +133,9 @@ test('undecided installs default on, disclose analytics, and can opt out in one 
     web_attribution_present: true,
     is_first_launch: true,
   });
-  expect(optedOut?.properties).toMatchObject({ source: 'default_on_notice' });
 });
 
-test('an explicit existing opt-out stays disabled and receives no default-on notice', async ({ page }) => {
+test('an explicit existing opt-out stays disabled and receives no default-on events', async ({ page }) => {
   const identity = {
     distinctId: 'install:install_existing_opt_out_e2e',
     installId: 'install_existing_opt_out_e2e',
@@ -181,9 +184,8 @@ test('an explicit existing opt-out stays disabled and receives no default-on not
 
   await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-  await expect(page.getByRole('complementary', { name: 'Analytics notice' })).toBeHidden();
   await page.waitForTimeout(250);
   expect(parseCapturedEvents(requests).map((event) => event.event)).not.toEqual(
-    expect.arrayContaining(['analytics_notice_shown', 'analytics_default_enabled', 'app_opened'])
+    expect.arrayContaining(['analytics_default_enabled', 'app_opened'])
   );
 });

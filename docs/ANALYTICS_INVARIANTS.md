@@ -1,8 +1,8 @@
 # Analytics Invariants
 
 These rules keep Pane's PostHog funnel person-stitchable and privacy-safe. Pane
-uses disclosed, default-on product analytics for new and previously undecided
-installs. Users can opt out from the first-run notice or Privacy Settings.
+uses default-on product analytics for new and previously undecided installs.
+Privacy Settings clearly discloses that default and provides the opt-out.
 Explicit choices from older versions must never be overwritten.
 
 ## Identity Comes First
@@ -14,10 +14,10 @@ Required ordering:
 
 1. Resolve GitHub CLI email, git email, or stable `install_id`.
 2. Persist the analytics identity in config.
-3. Capture `analytics_notice_shown` and `analytics_default_enabled` for an
-   undecided install entering the default-on experiment.
+3. Capture `analytics_default_enabled` for an undecided install entering the
+   default-on experiment.
 4. Capture `analytics_opted_in` or `analytics_opted_out` for explicit Settings
-   and first-run notice choices.
+   choices.
 5. Capture `app_first_opened` and usage events only after the default or choice
    is applied.
 
@@ -30,8 +30,8 @@ usage, and leave the PostHog SDK opted out.
 `analytics_consent_shown=true` records an explicit choice made under the legacy
 opt-in dialog. Its stored `analytics.enabled` value is authoritative. Never
 replace an explicit `false` with the default-on value. The
-`analytics_default_notice_shown` preference distinguishes installs already
-processed by the new experiment from previously undecided installs.
+`analytics_default_applied` distinguishes installs already processed by the
+new experiment from previously undecided installs.
 
 ## Required Event Context
 

@@ -313,7 +313,7 @@ export function capture(eventName: string, properties?: AnalyticsProperties): vo
  *
  * Use this sparingly. The legitimate cases are funnel-completeness and
  * disclosure/choice events that must be captured in a strict order:
- * analytics_notice_shown, analytics_default_enabled, explicit choices, and
+ * analytics_default_enabled, settings disclosure/explicit choices, and
  * app_first_opened.
  */
 export async function captureUnconditionally(
