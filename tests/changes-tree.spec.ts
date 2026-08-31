@@ -359,18 +359,30 @@ test('switching sessions cannot show rows from the previous session', async ({ p
   expect((await manifestCalls(page)).filter(call => call.sessionId === secondSession.id && call.scope.kind === 'commit')).toHaveLength(0);
 });
 
-test('viewport matrix keeps basename and status visible without horizontal overflow', async ({ page }) => {
+test('inspector width matrix keeps basename and status visible without horizontal overflow', async ({ page }) => {
+  // AC8 is about the inspector rail's width, not the window's: the window stays
+  // regular and the persisted rail width varies from its minimum to wide.
   await openTree(page);
-  for (const width of [360, 580, 640, 1200]) {
-    await page.setViewportSize({ width, height: 800 });
+  for (const width of [240, 360, 580, 700]) {
+    // The unloading page persists its own width, so the preference must be
+    // written after unload and before boot: an init script, re-registered per
+    // iteration (they accumulate; the latest registration runs last and wins).
+    await page.addInitScript(value => localStorage.setItem('pane-detail-panel-width:v2', JSON.stringify({ version: 2, preferredPx: value })), width);
+    await page.reload();
+    await page.getByRole('button', { name: session.name, exact: true }).click();
+    await page.getByRole('tab', { name: 'Changes', exact: true }).click();
     const row = page.getByRole('treeitem', { name: 'Open diff for assets/image.bin' });
     await row.scrollIntoViewIfNeeded();
     await expect(row.locator('.pane-changes-tree-label')).toHaveText('image.bin');
     await expect(row.locator('.pane-changes-tree-status')).toBeVisible();
+    const hostBox = await page.locator('.pane-inspector-host:visible').boundingBox();
+    // The rail honors the preference up to the app's own cap (window minus the
+    // center's reserve), so wide requests may land below the asked width.
+    expect(hostBox && hostBox.width).toBeGreaterThanOrEqual(Math.min(width, 580) - 16);
+    expect(hostBox && hostBox.width).toBeLessThanOrEqual(width + 16);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   }
 });
-
 for (const scenario of [
   {
     name: 'remote branch',
@@ -458,7 +470,7 @@ test('active file selection is scope-gated, a manual collapse sticks, and refocu
 test('a wide persisted commits pane cannot squeeze the tree out of a side-by-side split', async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem('diff-panel-sidebar-width', '600');
-    localStorage.setItem('pane-detail-panel-width', '700');
+    localStorage.setItem('pane-detail-panel-width:v2', JSON.stringify({ version: 2, preferredPx: 700 }));
   });
   await page.setViewportSize({ width: 1280, height: 800 });
   await openTree(page);
