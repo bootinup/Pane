@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import path from 'path';
+import { posix as path } from 'path';
 import type { UpdateCapabilities } from '../../../shared/types/updater';
 
 const DCOUPLE_DEVELOPER_ID = 'Authority=Developer ID Application: Dcouple Inc (FBM5YSF467)';
