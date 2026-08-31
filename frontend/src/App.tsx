@@ -682,7 +682,8 @@ function App() {
     const checkResumableSessions = async () => {
       try {
         const result = await window.electronAPI.sessions.getResumable();
-        if (!cancelled && result.success && result.data && Array.isArray(result.data) && result.data.length > 0) {
+        if (cancelled) return;
+        if (result.success && result.data && Array.isArray(result.data) && result.data.length > 0) {
           setResumableSessions(result.data);
           setIsResumeDialogOpen(true);
         }
