@@ -1796,6 +1796,7 @@ export const SessionView = memo(() => {
           onPanelSelect={handlePanelSelect}
           onPanelClose={handlePanelClose}
           onPanelCreate={handlePanelCreate}
+          onShowExplorer={() => openInspector('files')}
           projectEnvironment={activeProjectEnvironment}
           onToggleDetailPanel={handleToggleDetailPanel}
           detailPanelVisible={detailVisible}

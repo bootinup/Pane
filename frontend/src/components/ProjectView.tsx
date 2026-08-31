@@ -381,6 +381,7 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
             onPanelSelect={handlePanelSelect}
             onPanelClose={handlePanelClose}
             onPanelCreate={handlePanelCreate}
+            onShowExplorer={() => { setInspectorTab('files'); setDetailVisible(true); }}
             projectEnvironment={projectEnvironment}
             context="project"
             onToggleDetailPanel={() => setDetailVisible(v => !v)}
