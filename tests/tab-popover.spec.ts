@@ -14,12 +14,6 @@ const panel = {
   state: { isActive: true, hasBeenViewed: true, customState: { isInitialized: false } },
   metadata: { createdAt: now, lastActiveAt: now, position: 0, permanent: true },
 };
-const explorerPanel = {
-  id: 'popover-explorer', sessionId: session.id, type: 'explorer', title: 'Explorer',
-  state: { isActive: false, hasBeenViewed: true, customState: {} },
-  metadata: { createdAt: now, lastActiveAt: now, position: 1, permanent: true },
-};
-
 test('add-tool popover supports keyboard navigation and dismissal', async ({ page }, testInfo) => {
   await installElectronApiMock(page, {
     platform: 'darwin', initialProjects: [project], initialSessions: [session], initialPanels: [panel], activeProjectId: project.id,
@@ -46,10 +40,10 @@ test('add-tool popover supports keyboard navigation and dismissal', async ({ pag
   await expect(trigger).toBeFocused();
 });
 
-test('Explorer in the add-tool menu opens the Files inspector', async ({ page }) => {
+test('Explorer in the add-tool menu creates a missing panel and opens the Files inspector', async ({ page }) => {
   await installElectronApiMock(page, {
     platform: 'darwin', initialProjects: [project], initialSessions: [session],
-    initialPanels: [panel, explorerPanel], activeProjectId: project.id,
+    initialPanels: [panel], activeProjectId: project.id,
   });
   await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await page.getByRole('button', { name: /^Expand repository Popover$/ }).click();
