@@ -710,7 +710,9 @@ export function Sidebar({ onAboutClick, onSettingsClick, onRemoteSettingsClick, 
             onProjectsRefresh={loadProjects}
             sessionSortAscending={sessionSortAscending}
             pinnedSectionExpanded={sidebarSectionExpansion.pinned}
+            repositoriesSectionExpanded={sidebarSectionExpansion.repositories}
             onPinnedSectionExpandedChange={handlePinnedSectionExpandedChange}
+            onRepositoriesSectionExpandedChange={handleRepositoriesSectionExpandedChange}
             onRegisterAddRepository={registerAddRepository}
             showRemoteDesktopLink={showRemoteDesktopLink}
             onRemoteDesktopClick={handleOpenRemoteDesktop}
