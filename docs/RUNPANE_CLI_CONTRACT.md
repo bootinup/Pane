@@ -296,6 +296,8 @@ These flags are consumed by local daemon-control commands:
 --name <name>
 --worktree-name <name>
 --base-branch <branch>
+--folder <name>
+--resume <agent-session-id>
 --agent <codex|claude|cursor>
 --tool-command <command>
 --title <title>
@@ -330,6 +332,7 @@ These flags are consumed by local daemon-control commands:
 --pinned
 --no-pinned
 --force
+--launch
 --follow
 --ack-now
 --include-held-input

@@ -37,6 +37,8 @@ import type {
   RunpanePaneArchiveResult,
   RunpanePaneArchiveSafetyCheck,
   RunpanePaneArchiveSuccessResult,
+  RunpanePaneAdoptRequest,
+  RunpanePaneAdoptResult,
   RunpanePaneCostRequest,
   RunpanePaneCostResult,
   RunpanePaneListRequest,
@@ -95,6 +97,7 @@ import { WorkspaceJournal, type WorkspaceJournalFilter } from '../services/works
 import { WorkspaceStateReader } from '../services/workspaceStateReader';
 import { WorkspaceCursorStore } from '../services/workspaceCursorStore';
 import { usageManager } from '../services/usage/usageManager';
+import { parseWSLPath } from '../utils/wslUtils';
 import {
   dueIdleEntries,
   nextIdleDeadline,
@@ -108,6 +111,7 @@ const RUNPANE_CHANNELS = [
   'runpane:panes:list',
   'runpane:panes:cost',
   'runpane:panes:create',
+  'runpane:panes:adopt',
   'runpane:panes:pin',
   'runpane:panes:rename',
   'runpane:panes:archive',
@@ -143,6 +147,7 @@ const DEFAULT_WORKSPACE_WAIT_LIMIT = 256;
 const WORKSPACE_CONSUMER_PATTERN = /^[A-Za-z0-9._-]{1,64}$/u;
 const MUTATING_RUNPANE_ACTIONS = new Set([
   'panes:create',
+  'panes:adopt',
   'panes:archive',
   'panes:pin',
   'panes:rename',
@@ -465,6 +470,119 @@ export function registerRunpaneHandlers(
     }, result => ({ repoId: result.repo.id, resultCount: result.items.length }));
   });
 
+  commandRegistry.register('runpane:panes:adopt', async (request: PaneCommandValue): Promise<RunpanePaneAdoptResult> => {
+    return withRunpaneAction(services, 'panes:adopt', {}, async () => {
+      const normalized = parsePaneAdoptRequest(request);
+      const repo = resolveRepoSelector(databaseService.getAllProjects(), normalized.repo);
+      const repoSummary = projectToRepoSummary(repo, sessionManager.getSessionsForProject(repo.id).length);
+      const items: RunpanePaneCreateResultItem[] = [];
+
+      for (const [index, item] of normalized.panes.entries()) {
+        let createdSessionId: string | undefined;
+        let storedWorktreePath = item.path;
+        try {
+          const validatedPath = await validateAdoptedWorktree(services, repo, item.path);
+          storedWorktreePath = validatedPath.storagePath;
+          const existing = findSessionByWorktreeIdentity(
+            databaseService.getAllSessionsIncludingArchived({ includeHidden: true }),
+            validatedPath.identityPath,
+            validatedPath.pathResolver,
+          );
+          if (existing) {
+            throw new Error(`Worktree path is already registered by pane "${existing.name}" (${existing.id})`);
+          }
+          const tool = resolveToolSpec(item.tool, new PathResolver(repo).environment);
+          if (normalized.dryRun) {
+            items.push({ ok: true, index, name: item.name, pinned: item.pinned !== false, worktreePath: storedWorktreePath, tool: describeTool(tool) });
+            continue;
+          }
+
+          const session = await sessionManager.createSession(
+            item.name,
+            storedWorktreePath,
+            '',
+            path.basename(storedWorktreePath),
+            'ignore',
+            repo.id,
+            false,
+            item.folder
+              ? resolveOrCreateAdoptFolder(databaseService, repo.id, item.folder)
+              : undefined,
+            'none',
+            undefined,
+            item.baseBranch,
+            item.pinned !== false,
+            { worktreeOwnership: 'external' },
+          );
+          createdSessionId = session.id;
+          await sessionManager.updateSession(session.id, { status: 'stopped' });
+          const stoppedSession = sessionManager.getSession(session.id);
+          if (!stoppedSession) throw new Error(`Created session ${session.id} was not found after status update`);
+          await Promise.all([
+            panelManager.ensureExplorerPanel(session.id),
+            panelManager.ensureDiffPanel(session.id),
+          ]);
+
+          const resumeCommand = item.resume && tool.agent
+            ? buildAdoptResumeCommand(tool.agent, item.resume)
+            : tool.command;
+          const initialState: TerminalPanelState = {
+            initialCommand: item.launch ? resumeCommand : undefined,
+            agentType: tool.agent,
+            agentSessionId: item.resume,
+            hasClaudeSessionId: tool.agent === 'claude' && Boolean(item.resume),
+            isCliPanel: Boolean(tool.agent),
+          };
+          const panel = await panelManager.createPanel({
+            sessionId: session.id,
+            type: 'terminal',
+            title: tool.title,
+            initialState,
+            activate: normalized.focus === true,
+          });
+          const context = sessionManager.getProjectContext(session.id);
+          await terminalPanelManager.initializeTerminal(panel, storedWorktreePath, context?.commandRunner.wslContext ?? null);
+          if (!item.launch) {
+            terminalPanelManager.writeToTerminal(panel.id, resumeCommand);
+          }
+          sessionManager.emitSessionCreated(stoppedSession, {
+            activateOnCreate: normalized.focus === true,
+            createDefaultTerminalOnCreate: false,
+          });
+          items.push({
+            ok: true,
+            index,
+            name: item.name,
+            pinned: item.pinned !== false,
+            sessionId: session.id,
+            paneId: session.id,
+            panelId: panel.id,
+            worktreePath: storedWorktreePath,
+            tool: describeTool(tool),
+            active: Boolean(panel.state.isActive),
+            focused: Boolean(panel.state.isActive),
+            nextCommand: panelOutputCommand(panel.id),
+          });
+        } catch (error) {
+          let failureSessionId = createdSessionId;
+          if (createdSessionId) {
+            try {
+              await sessionManager.archiveSession(createdSessionId);
+              if (databaseService.deleteArchivedSessionPermanently(createdSessionId)) {
+                failureSessionId = undefined;
+              }
+            } catch (rollbackError) {
+              console.error(`[Runpane] Failed to roll back adopted pane ${createdSessionId}:`, rollbackError);
+            }
+          }
+          items.push(createFailureItem(index, item, error, failureSessionId, storedWorktreePath));
+        }
+      }
+
+      return { ok: items.every(item => item.ok), repo: repoSummary, items };
+    }, result => ({ repoId: result.repo.id, resultCount: result.items.length }));
+  });
+
   commandRegistry.register('runpane:panes:archive', async (request: PaneCommandValue): Promise<RunpanePaneArchiveResult> => {
     return withRunpaneAction(services, 'panes:archive', {}, async () => {
       const normalized = parsePaneArchiveRequest(request);
@@ -474,7 +592,9 @@ export function registerRunpaneHandlers(
         throw new Error(`Pane ${normalized.paneId} is already archived`);
       }
 
-      const worktreeCleanupApplicable = Boolean(pane.projectId) && !pane.isMainRepo;
+      const worktreeCleanupApplicable = Boolean(pane.projectId)
+        && !pane.isMainRepo
+        && pane.worktreeOwnership !== 'external';
       const safetyCheck = worktreeCleanupApplicable
         ? await computeArchiveSafety(services, pane)
         : { performed: false };
@@ -969,6 +1089,7 @@ function sessionToPaneSummary(session: Session, project: Project): RunpanePaneSu
     createdAt: toIsoString(session.createdAt),
     lastActivity: toIsoString(session.lastActivity),
     archived: session.archived || undefined,
+    ownership: session.worktreeOwnership ?? 'pane',
   };
 }
 
@@ -2169,6 +2290,132 @@ function parsePaneCreateRequest(value: PaneCommandValue): RunpanePaneCreateReque
     focus: optionalBoolean(value.focus),
     source: value.source === 'user' || value.source === 'agent' ? value.source : undefined,
   };
+}
+
+function parsePaneAdoptRequest(value: PaneCommandValue): RunpanePaneAdoptRequest {
+  if (!isRecord(value)) throw new Error('Pane adopt request must be an object');
+  if (!Array.isArray(value.panes) || value.panes.length === 0) {
+    throw new Error('Pane adopt request must include at least one pane');
+  }
+  if (value.noFocus === true && value.focus === true) {
+    throw new Error('Pane adopt request cannot include both noFocus and focus');
+  }
+  return {
+    repo: parseRepoSelector(value.repo),
+    panes: value.panes.map((entry, index) => {
+      if (!isRecord(entry)) throw new Error(`Pane adopt item ${index} must be an object`);
+      const worktreePath = optionalString(entry.path)?.trim();
+      const name = optionalString(entry.name)?.trim();
+      if (!worktreePath) throw new Error(`Pane adopt item ${index} must include path`);
+      if (!name) throw new Error(`Pane adopt item ${index} must include name`);
+      return {
+        path: worktreePath,
+        name,
+        baseBranch: optionalString(entry.baseBranch),
+        folder: optionalString(entry.folder),
+        pinned: optionalBoolean(entry.pinned),
+        tool: parseRunpaneToolSpec(entry.tool, `Pane adopt item ${index}`),
+        resume: optionalString(entry.resume),
+        launch: optionalBoolean(entry.launch),
+      };
+    }),
+    dryRun: optionalBoolean(value.dryRun),
+    noFocus: optionalBoolean(value.noFocus),
+    focus: optionalBoolean(value.focus),
+    source: value.source === 'user' || value.source === 'agent' ? value.source : undefined,
+  };
+}
+
+async function validateAdoptedWorktree(
+  services: AppServices,
+  repo: Project,
+  requestedPath: string,
+): Promise<{ storagePath: string; identityPath: string; pathResolver: PathResolver }> {
+  const context = services.sessionManager.getProjectContextByProjectId(repo.id);
+  if (!context) throw new Error(`Project context is unavailable for ${repo.name}`);
+  let identityPath: string;
+  try {
+    identityPath = resolvePathIdentity(requestedPath, context.pathResolver);
+  } catch {
+    throw new Error(`Adopt path does not exist: ${requestedPath}`);
+  }
+  const worktrees = await services.worktreeManager.listWorktrees(repo.path, context.commandRunner);
+  const registeredPaths = worktrees.flatMap(entry => {
+    try {
+      return [resolvePathIdentity(entry.path, context.pathResolver)];
+    } catch {
+      return [];
+    }
+  });
+  if (!registeredPaths.some(registeredPath => pathsHaveSameIdentity(registeredPath, identityPath))) {
+    throw new Error(`Adopt path is not a git worktree of the selected repository: ${requestedPath}`);
+  }
+
+  const storagePath = context.pathResolver.environment === 'wsl'
+    ? parseWSLPath(identityPath)?.linuxPath ?? requestedPath
+    : identityPath;
+  const candidateCommon = await resolveGitCommonDirectory(storagePath, context.pathResolver, context.commandRunner);
+  const repoCommon = await resolveGitCommonDirectory(repo.path, context.pathResolver, context.commandRunner);
+  if (!pathsHaveSameIdentity(candidateCommon, repoCommon)) {
+    throw new Error(`Adopt path belongs to a different git repository: ${requestedPath}`);
+  }
+  return { storagePath, identityPath, pathResolver: context.pathResolver };
+}
+
+async function resolveGitCommonDirectory(
+  directory: string,
+  pathResolver: PathResolver,
+  commandRunner: CommandRunner,
+): Promise<string> {
+  const { stdout } = await commandRunner.execAsync('git rev-parse --git-common-dir', directory);
+  const common = stdout.trim();
+  const storedCommon = pathResolver.environment === 'wsl'
+    ? common.startsWith('/') ? common : path.posix.resolve(directory, common)
+    : path.resolve(directory, common);
+  return resolvePathIdentity(storedCommon, pathResolver);
+}
+
+function resolvePathIdentity(storedPath: string, pathResolver: PathResolver): string {
+  return fs.realpathSync.native(pathResolver.toFileSystem(storedPath));
+}
+
+function pathsHaveSameIdentity(left: string, right: string): boolean {
+  const normalize = (value: string): string => {
+    const normalized = path.normalize(value).replace(/[\\/]+$/u, '');
+    return process.platform === 'win32' ? normalized.toLocaleLowerCase('en-US') : normalized;
+  };
+  return normalize(left) === normalize(right);
+}
+
+function findSessionByWorktreeIdentity<T extends { worktree_path: string }>(
+  sessions: readonly T[],
+  identityPath: string,
+  pathResolver: PathResolver,
+): T | undefined {
+  return sessions.find(session => {
+    try {
+      return pathsHaveSameIdentity(resolvePathIdentity(session.worktree_path, pathResolver), identityPath);
+    } catch {
+      return false;
+    }
+  });
+}
+
+function buildAdoptResumeCommand(agent: RunpaneAgentId, sessionId: string): string {
+  const id = escapeShellArg(sessionId);
+  if (agent === 'claude') return `claude --resume ${id} --dangerously-skip-permissions`;
+  if (agent === 'codex') return `codex resume --yolo ${id}`;
+  return `cursor-agent --force --trust --resume ${id}`;
+}
+
+function resolveOrCreateAdoptFolder(
+  databaseService: AppServices['databaseService'],
+  projectId: number,
+  folderName: string,
+): string {
+  const existing = databaseService.getFoldersForProject(projectId)
+    .find(folder => folder.name === folderName && !folder.parent_folder_id);
+  return existing?.id ?? databaseService.createFolder(folderName, projectId).id;
 }
 
 function parsePanelListRequest(value: PaneCommandValue): RunpanePanelListRequest {

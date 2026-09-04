@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
   is_favorite BOOLEAN DEFAULT 0,
   favorite_pinned_at DATETIME,
-  is_hidden BOOLEAN DEFAULT 0
+  is_hidden BOOLEAN DEFAULT 0,
+  worktree_ownership TEXT NOT NULL DEFAULT 'pane'
 );
 
 -- Session outputs table to store terminal output history

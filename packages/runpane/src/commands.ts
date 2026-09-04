@@ -29,6 +29,8 @@ export interface ParsedArgs {
   paneId?: string;
   panelId?: string;
   repoPath?: string;
+  folder?: string;
+  resume?: string;
   name?: string;
   worktreeName?: string;
   baseBranch?: string;
@@ -55,6 +57,7 @@ export interface ParsedArgs {
   noPinned?: boolean;
   composerStrategy?: string;
   force?: boolean;
+  launch?: boolean;
   watchAs?: string;
   watchSince?: number;
   watchFrom?: 'now' | 'earliest';
@@ -308,6 +311,10 @@ function parseLocalBooleanFlag(flag: string, parsed: ParsedArgs): void {
     parsed.force = true;
     return;
   }
+  if (flag === '--launch') {
+    parsed.launch = true;
+    return;
+  }
   if (flag === '--follow') {
     parsed.follow = true;
     return;
@@ -387,6 +394,14 @@ function parseLocalValueFlag(flag: string, value: string, parsed: ParsedArgs): v
   }
   if (flag === '--base-branch') {
     parsed.baseBranch = value;
+    return;
+  }
+  if (flag === '--folder') {
+    parsed.folder = value;
+    return;
+  }
+  if (flag === '--resume') {
+    parsed.resume = value;
     return;
   }
   if (flag === '--agent') {
@@ -558,6 +573,7 @@ function isRunpaneLocalCommand(command: RunpaneCommand): boolean {
     || command === 'panes list'
     || command === 'panes cost'
     || command === 'panes create'
+    || command === 'panes adopt'
     || command === 'panes archive'
     || command === 'panes pin'
     || command === 'panes unpin'

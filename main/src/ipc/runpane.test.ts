@@ -18,12 +18,15 @@ import { WorkspaceJournal } from '../services/workspaceJournal';
 import { WorkspaceCursorStore } from '../services/workspaceCursorStore';
 import { usageManager } from '../services/usage/usageManager';
 import { CommandRunner } from '../utils/commandRunner';
+import { PathResolver } from '../utils/pathResolver';
 import { registerRunpaneHandlers } from './runpane';
 
 vi.spyOn(panelManager, 'createPanel');
 vi.spyOn(panelManager, 'getPanel');
 vi.spyOn(panelManager, 'getPanelsForSession');
 vi.spyOn(panelManager, 'updatePanel');
+vi.spyOn(panelManager, 'ensureExplorerPanel');
+vi.spyOn(panelManager, 'ensureDiffPanel');
 vi.spyOn(terminalPanelManager, 'initializeTerminal');
 vi.spyOn(terminalPanelManager, 'isTerminalInitialized');
 vi.spyOn(terminalPanelManager, 'getTerminalSnapshot');
@@ -284,6 +287,8 @@ describe('runpane IPC handlers', () => {
     vi.mocked(panelManager.getPanel).mockReset();
     vi.mocked(panelManager.getPanelsForSession).mockReset();
     vi.mocked(panelManager.updatePanel).mockReset();
+    vi.mocked(panelManager.ensureExplorerPanel).mockReset().mockResolvedValue(undefined);
+    vi.mocked(panelManager.ensureDiffPanel).mockReset().mockResolvedValue(undefined);
     vi.mocked(terminalPanelManager.initializeTerminal).mockReset();
     vi.mocked(terminalPanelManager.isTerminalInitialized).mockReset();
     vi.mocked(terminalPanelManager.getTerminalSnapshot).mockReset();
@@ -321,6 +326,135 @@ describe('runpane IPC handlers', () => {
     vi.mocked(terminalPanelManager.isTerminalInitialized).mockReturnValue(true);
     vi.mocked(terminalPanelManager.getTerminalSnapshot).mockReturnValue(null);
     vi.mocked(terminalPanelManager.getTerminalScrollback).mockReturnValue(null);
+  });
+
+  describe('runpane:panes:adopt', () => {
+    function adoptionServices(repoPath: string, worktreePath: string, duplicate = false): AppServices {
+      const adoptionProject = { ...project, path: repoPath };
+      const commandRunner = new CommandRunner(adoptionProject);
+      // SAFETY: These test doubles provide the exact service members exercised by adoption.
+      return createServices({
+        databaseService: {
+          ...createServices().databaseService,
+          getAllProjects: vi.fn(() => [adoptionProject]),
+          getAllSessionsIncludingArchived: vi.fn(() => duplicate
+            ? [{ id: 'existing', name: 'Existing', worktree_path: worktreePath }]
+            : []),
+          deleteArchivedSessionPermanently: vi.fn(() => true),
+        // SAFETY: This fixture implements the database methods used by the handler.
+        } as never,
+        sessionManager: {
+          ...createServices().sessionManager,
+          getProjectContextByProjectId: vi.fn(() => ({
+            project: adoptionProject,
+            pathResolver: new PathResolver(adoptionProject),
+            commandRunner,
+          })),
+          createSession: vi.fn(async () => ({ ...session, worktreePath, worktreeOwnership: 'external' })),
+          updateSession: vi.fn(async () => undefined),
+          getSession: vi.fn(() => ({ ...session, status: 'stopped', worktreePath, worktreeOwnership: 'external' })),
+          emitSessionCreated: vi.fn(),
+          archiveSession: vi.fn(async () => undefined),
+        // SAFETY: This fixture implements the session-manager methods used by the handler.
+        } as never,
+        worktreeManager: {
+          ...createServices().worktreeManager,
+          listWorktrees: vi.fn(async () => [{ path: worktreePath, branch: 'feature' }]),
+        // SAFETY: This fixture implements the worktree-manager method used by the handler.
+        } as never,
+      });
+    }
+
+    it('resolves symlinks and previews a registered worktree without mutation', async () => {
+      const repoPath = createTempGitRepo('adopt-repo');
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repoPath, stdio: 'ignore' });
+      const worktreePath = path.join(path.dirname(repoPath), 'adopt-worktree');
+      execFileSync('git', ['worktree', 'add', '-b', 'feature', worktreePath], { cwd: repoPath, stdio: 'ignore' });
+      const symlinkPath = path.join(path.dirname(repoPath), 'adopt-link');
+      fs.symlinkSync(worktreePath, symlinkPath, process.platform === 'win32' ? 'junction' : 'dir');
+      const services = adoptionServices(repoPath, worktreePath);
+
+      const result = await createRegistry(services).invoke('runpane:panes:adopt', [{
+        repo: { id: project.id },
+        panes: [{ path: symlinkPath, name: 'Adopted', tool: { agent: 'codex' } }],
+        dryRun: true,
+      }]);
+
+      expect(result).toMatchObject({ ok: true, items: [{ ok: true, worktreePath: fs.realpathSync.native(worktreePath) }] });
+      expect(services.sessionManager.createSession).not.toHaveBeenCalled();
+      expect(panelManager.createPanel).not.toHaveBeenCalled();
+    });
+
+    it('refuses paths outside the selected repo and duplicate canonical paths', async () => {
+      const repoPath = createTempGitRepo('guard-repo');
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repoPath, stdio: 'ignore' });
+      const otherPath = createTempGitRepo('other-repo');
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: otherPath, stdio: 'ignore' });
+      const baseRequest = { repo: { id: project.id }, panes: [{ path: otherPath, name: 'Other', tool: { agent: 'codex' } }], dryRun: true };
+
+      const wrongRepo = await createRegistry(adoptionServices(repoPath, path.join(repoPath, 'expected')))
+        .invoke('runpane:panes:adopt', [baseRequest]);
+      expect(wrongRepo).toMatchObject({ ok: false, items: [{ error: { message: expect.stringContaining('not a git worktree') } }] });
+
+      const duplicateAlias = path.join(path.dirname(otherPath), 'other-alias');
+      fs.symlinkSync(otherPath, duplicateAlias, process.platform === 'win32' ? 'junction' : 'dir');
+      const duplicateServices = adoptionServices(otherPath, otherPath, true);
+      vi.mocked(duplicateServices.databaseService.getAllSessionsIncludingArchived).mockReturnValue([
+        // SAFETY: This minimal persisted-session fixture supplies the fields used by duplicate validation.
+        { id: 'existing', name: 'Existing', worktree_path: duplicateAlias } as never,
+      ]);
+      const duplicate = await createRegistry(duplicateServices)
+        .invoke('runpane:panes:adopt', [baseRequest]);
+      expect(duplicate).toMatchObject({ ok: false, items: [{ error: { message: expect.stringContaining('already registered') } }] });
+    });
+
+    it('emits the stopped pane, creates one configured terminal, and stages resume input', async () => {
+      const repoPath = createTempGitRepo('create-adopt-repo');
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repoPath, stdio: 'ignore' });
+      const worktreePath = path.join(path.dirname(repoPath), 'create-adopt-worktree');
+      execFileSync('git', ['worktree', 'add', '-b', 'create-adopt', worktreePath], { cwd: repoPath, stdio: 'ignore' });
+      const services = adoptionServices(repoPath, worktreePath);
+      vi.mocked(panelManager.createPanel).mockResolvedValue(terminalPanel);
+      vi.mocked(terminalPanelManager.initializeTerminal).mockResolvedValue(undefined);
+
+      const result = await createRegistry(services).invoke('runpane:panes:adopt', [{
+        repo: { id: project.id },
+        panes: [{ path: worktreePath, name: 'Adopted', tool: { agent: 'codex' }, resume: 'thread-1' }],
+      }]);
+
+      expect(result).toMatchObject({ ok: true, items: [{ ok: true, sessionId: session.id }] });
+      expect(panelManager.createPanel).toHaveBeenCalledTimes(1);
+      expect(panelManager.createPanel).toHaveBeenCalledWith(expect.objectContaining({
+        initialState: expect.objectContaining({ agentSessionId: 'thread-1', initialCommand: undefined }),
+      }));
+      expect(terminalPanelManager.writeToTerminal).toHaveBeenCalledWith(
+        terminalPanel.id,
+        expect.stringMatching(/^codex resume --yolo ["']thread-1["']$/u),
+      );
+      expect(services.sessionManager.emitSessionCreated).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'stopped' }),
+        expect.objectContaining({ createDefaultTerminalOnCreate: false }),
+      );
+    });
+
+    it('rolls back the pane record when terminal setup fails', async () => {
+      const repoPath = createTempGitRepo('rollback-adopt-repo');
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repoPath, stdio: 'ignore' });
+      const worktreePath = path.join(path.dirname(repoPath), 'rollback-adopt-worktree');
+      execFileSync('git', ['worktree', 'add', '-b', 'rollback-adopt', worktreePath], { cwd: repoPath, stdio: 'ignore' });
+      const services = adoptionServices(repoPath, worktreePath);
+      vi.mocked(panelManager.createPanel).mockResolvedValue(terminalPanel);
+      vi.mocked(terminalPanelManager.initializeTerminal).mockRejectedValue(new Error('PTY failed'));
+
+      const result = await createRegistry(services).invoke('runpane:panes:adopt', [{
+        repo: { id: project.id },
+        panes: [{ path: worktreePath, name: 'Adopted', tool: { agent: 'codex' } }],
+      }]);
+
+      expect(result).toMatchObject({ ok: false, items: [{ ok: false, sessionId: undefined }] });
+      expect(services.sessionManager.archiveSession).toHaveBeenCalledWith(session.id);
+      expect(services.databaseService.deleteArchivedSessionPermanently).toHaveBeenCalledWith(session.id);
+    });
   });
 
   afterEach(() => {
@@ -2940,6 +3074,39 @@ describe('runpane IPC handlers', () => {
   });
 
   describe('runpane:panes:archive', () => {
+    it('archives an externally owned pane without inspecting or removing its worktree', async () => {
+      const externalSession: Session = { ...session, worktreeOwnership: 'external' };
+      // SAFETY: This test double provides the exact SessionManager members exercised by archive.
+      const services = createServices({
+        sessionManager: {
+          ...createServices().sessionManager,
+          getSession: vi.fn(() => externalSession),
+        // SAFETY: This fixture implements the session-manager method used by the handler.
+        } as never,
+      });
+      const registry = createRegistry(services);
+      const sessionsDelete = registerSessionsDeleteStub(registry, services);
+
+      const preview = await registry.invoke('runpane:panes:archive', [{
+        paneId: session.id,
+        dryRun: true,
+      }]);
+      expect(preview).toMatchObject({
+        ok: true,
+        wouldArchive: true,
+        safetyCheck: { performed: false },
+      });
+      expect(services.gitStatusManager.getGitStatus).not.toHaveBeenCalled();
+
+      const result = await registry.invoke('runpane:panes:archive', [{ paneId: session.id }]);
+      expect(sessionsDelete).toHaveBeenCalledWith(session.id);
+      expect(result).toMatchObject({
+        ok: true,
+        archived: true,
+        worktreeCleanup: 'not-applicable',
+      });
+    });
+
     it('archives a clean pane and waits for worktree cleanup to complete', async () => {
       const repoPath = createTempGitRepo('clean-repo');
       execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repoPath, stdio: 'ignore' });

@@ -373,6 +373,7 @@
         "workspace state",
         "watch",
         "panes create",
+        "panes adopt",
         "panes archive",
         "panes pin",
         "panes unpin",
@@ -438,6 +439,9 @@
           "$ref": "#/$defs/helpLines"
         },
         "panes create": {
+          "$ref": "#/$defs/helpLines"
+        },
+        "panes adopt": {
           "$ref": "#/$defs/helpLines"
         },
         "panes archive": {

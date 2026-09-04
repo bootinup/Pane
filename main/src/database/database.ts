@@ -632,6 +632,18 @@ export class DatabaseService {
         .run();
     }
 
+    const hasWorktreeOwnershipColumn = sessionTableInfoForMainRepo.some(
+      (col: SqliteTableInfo) => col.name === "worktree_ownership",
+    );
+    if (!hasWorktreeOwnershipColumn) {
+      this.db.prepare(
+        "ALTER TABLE sessions ADD COLUMN worktree_ownership TEXT NOT NULL DEFAULT 'pane'",
+      ).run();
+      this.db.prepare(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_worktree_ownership ON sessions(worktree_ownership, project_id)",
+      ).run();
+    }
+
     // Add main_branch column to projects table if it doesn't exist
     // SAFETY: This fixed SQLite query projection matches the declared row type at this database boundary.
     const projectsTableInfo = this.db
@@ -2430,6 +2442,21 @@ export class DatabaseService {
       `);
       console.log("[Database] Added credit and limit-state columns to usage_rate_limits table");
     }
+
+    // Keep this ownership migration after legacy table-rebuild migrations above,
+    // since those intentionally reconstruct sessions from an older column set.
+    // SAFETY: SQLite PRAGMA table_info returns the SqliteTableInfo projection.
+    const finalSessionColumns = this.db
+      .prepare("PRAGMA table_info(sessions)")
+      .all() as SqliteTableInfo[];
+    if (!finalSessionColumns.some(column => column.name === "worktree_ownership")) {
+      this.db.prepare(
+        "ALTER TABLE sessions ADD COLUMN worktree_ownership TEXT NOT NULL DEFAULT 'pane'",
+      ).run();
+    }
+    this.db.prepare(
+      "CREATE INDEX IF NOT EXISTS idx_sessions_worktree_ownership ON sessions(worktree_ownership, project_id)",
+    ).run();
   }
 
   // Project operations
@@ -3019,8 +3046,8 @@ export class DatabaseService {
       this.db
         .prepare(
           `
-        INSERT INTO sessions (id, name, initial_prompt, worktree_name, worktree_path, status, project_id, folder_id, permission_mode, is_main_repo, display_order, tool_type, base_commit, base_branch, is_favorite, favorite_pinned_at, is_hidden)
-        VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'CURRENT_TIMESTAMP' THEN CURRENT_TIMESTAMP WHEN ? = 1 AND ? IS NULL THEN CURRENT_TIMESTAMP ELSE ? END, ?)
+        INSERT INTO sessions (id, name, initial_prompt, worktree_name, worktree_path, status, project_id, folder_id, permission_mode, is_main_repo, worktree_ownership, display_order, tool_type, base_commit, base_branch, is_favorite, favorite_pinned_at, is_hidden, commit_mode)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'CURRENT_TIMESTAMP' THEN CURRENT_TIMESTAMP WHEN ? = 1 AND ? IS NULL THEN CURRENT_TIMESTAMP ELSE ? END, ?, ?)
       `,
         )
         .run(
@@ -3033,6 +3060,7 @@ export class DatabaseService {
           data.folder_id || null,
           data.permission_mode || "ignore",
           data.is_main_repo ? 1 : 0,
+          data.worktree_ownership ?? "pane",
           displayOrder,
           data.tool_type || "claude",
           data.base_commit || null,
@@ -3043,6 +3071,7 @@ export class DatabaseService {
           data.favorite_pinned_at || null,
           data.favorite_pinned_at || null,
           data.is_hidden ? 1 : 0,
+          data.commit_mode ?? null,
         );
 
       const session = this.getSession(data.id);
@@ -3059,6 +3088,13 @@ export class DatabaseService {
       .prepare("SELECT * FROM sessions WHERE id = ?")
       .get(id) as Session | undefined;
     return session;
+  }
+
+  getSessionByWorktreePath(worktreePath: string): Session | undefined {
+    // SAFETY: This fixed query selects a complete sessions row matching the declared model.
+    return this.db
+      .prepare("SELECT * FROM sessions WHERE worktree_path = ? LIMIT 1")
+      .get(worktreePath) as Session | undefined;
   }
 
   getAllSessions(projectId?: number, options?: { includeHidden?: boolean }): Session[] {

@@ -240,6 +240,17 @@
       ]
     },
     {
+      "name": "panes adopt",
+      "summary": "Adopt an existing externally managed git worktree as a Pane without changing the worktree.",
+      "usage": [
+        "runpane panes adopt --repo <selector> --path <dir> --name <name> --agent <codex|claude|cursor> [--resume <id>] [--folder <name>] [--launch] [--no-pinned] [--dry-run] [--yes] [--json]"
+      ],
+      "mutates": true,
+      "jsonSchemas": [
+        "paneCreateResult"
+      ]
+    },
+    {
       "name": "panes archive",
       "summary": "Archive a Pane (session) exactly like the UI Archive action, including safe removal of its Pane-managed git worktree.",
       "usage": [
@@ -508,6 +519,16 @@
         "description": "Base branch for the created worktree."
       },
       {
+        "name": "--folder",
+        "value": "<name>",
+        "description": "Top-level sidebar folder for an adopted pane."
+      },
+      {
+        "name": "--resume",
+        "value": "<agent-session-id>",
+        "description": "Agent session id to persist and resume in an adopted pane."
+      },
+      {
         "name": "--agent",
         "value": "<codex|claude|cursor>",
         "description": "Built-in agent terminal template to open."
@@ -674,6 +695,10 @@
       {
         "name": "--force",
         "description": "Archive even if the pane's branch has uncommitted, untracked, or unpushed changes."
+      },
+      {
+        "name": "--launch",
+        "description": "Run an adopted pane's agent resume command immediately instead of staging it."
       },
       {
         "name": "--follow",
@@ -1002,6 +1027,14 @@
         "  --json                         Print machine-readable output",
         "  --dry-run                      Validate and preview without creating panes",
         "  --yes                          Skip confirmation for mutating commands"
+      ],
+      "panes adopt": [
+        "Usage:",
+        "  runpane panes adopt --repo <selector> --path <dir> --name <name> --agent <codex|claude|cursor> [options]",
+        "",
+        "Adopts an existing externally managed git worktree without creating, syncing, or deleting it.",
+        "",
+        "Options: --resume <id> stages the agent resume command; --launch runs it immediately; --folder <name> groups the pane; --no-pinned opts out of pinning; --dry-run previews."
       ],
       "panes archive": [
         "Usage:",
@@ -1495,6 +1528,14 @@
         "  --json                         Print machine-readable output",
         "  --dry-run                      Validate and preview without creating panes",
         "  --yes                          Skip confirmation for mutating commands"
+      ],
+      "panes adopt": [
+        "Usage:",
+        "  runpane panes adopt --repo <selector> --path <dir> --name <name> --agent <codex|claude|cursor> [options]",
+        "",
+        "Adopts an existing externally managed git worktree without creating, syncing, or deleting it.",
+        "",
+        "Options: --resume <id> stages the agent resume command; --launch runs it immediately; --folder <name> groups the pane; --no-pinned opts out of pinning; --dry-run previews."
       ],
       "panes archive": [
         "Usage:",
@@ -3265,7 +3306,8 @@
               "repoId",
               "panelCount",
               "pinned",
-              "agentStatus"
+              "agentStatus",
+              "ownership"
             ],
             "properties": {
               "id": {
@@ -3308,6 +3350,12 @@
                 "enum": [
                   "active",
                   "idle"
+                ]
+              },
+              "ownership": {
+                "enum": [
+                  "pane",
+                  "external"
                 ]
               }
             },
@@ -5753,6 +5801,34 @@
           "From WSL with Windows Pane, invoke through PowerShell and select the saved WSL repo by name or id, for example `powershell.exe -NoProfile -Command 'Set-Location $env:TEMP; runpane panes create --repo \"WSL Pane\" --name issue-123 --agent <agent> --prompt \"Plan this issue\" --source agent --no-focus --wait-ready --yes --json'`.",
           "Use --wait-ready when an agent needs to verify that an agent terminal started instead of only creating a pane.",
           "If readiness returns blocked, inspect blocked.suggestedCommand rather than guessing which prompt to answer."
+        ]
+      },
+      "panes adopt": {
+        "name": "panes adopt",
+        "summary": "Adopt an existing externally managed git worktree as a Pane.",
+        "details": "Validates that the canonical path is a registered worktree of the selected saved repository, then creates a Pane record without creating, syncing, building, removing, or recreating the directory.",
+        "requiresPaneDaemon": true,
+        "mutates": true,
+        "arguments": [
+          { "name": "--repo", "value": "<selector>", "required": true, "description": "Saved repository selector." },
+          { "name": "--path", "value": "<dir>", "required": true, "description": "Existing git worktree path." },
+          { "name": "--name", "value": "<name>", "required": true, "description": "Pane name." },
+          { "name": "--agent", "value": "<codex|claude|cursor>", "required": true, "description": "Agent whose terminal to create." },
+          { "name": "--resume", "value": "<id>", "required": false, "description": "Persist this agent session id and stage its resume command." },
+          { "name": "--folder", "value": "<name>", "required": false, "description": "Top-level sidebar folder." },
+          { "name": "--launch", "required": false, "description": "Run the resume command immediately." },
+          { "name": "--no-pinned", "required": false, "description": "Do not pin the adopted pane." },
+          { "name": "--dry-run", "required": false, "description": "Validate and preview only." },
+          { "name": "--yes", "required": false, "description": "Skip confirmation." },
+          { "name": "--json", "required": false, "description": "Print machine-readable output." }
+        ],
+        "examples": [
+          "runpane panes adopt --repo active --path /path/to/worktree --name imported --agent codex --resume <id> --yes --json"
+        ],
+        "jsonSchemas": ["paneCreateResult"],
+        "notes": [
+          "The resume command is staged without Enter unless --launch is passed.",
+          "Pane never removes an externally owned worktree."
         ]
       },
       "panes archive": {
