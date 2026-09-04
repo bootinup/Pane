@@ -67,15 +67,16 @@ export function setupEventListeners(services: AppServices): void {
   sessionManager.on('session-created', async (session) => {
     sendRendererEvent('session:created', session);
 
-    // Auto-create a default terminal panel for every session
-    try {
-      await panelManager.createPanel({
-        sessionId: session.id,
-        type: 'terminal',
-        title: 'Terminal',
-      });
-    } catch (error) {
-      console.error(`[Events] Failed to auto-create terminal panel for session ${session.id}:`, error);
+    if (session.createDefaultTerminalOnCreate !== false) {
+      try {
+        await panelManager.createPanel({
+          sessionId: session.id,
+          type: 'terminal',
+          title: 'Terminal',
+        });
+      } catch (error) {
+        console.error(`[Events] Failed to auto-create terminal panel for session ${session.id}:`, error);
+      }
     }
 
     // Refresh git status for newly created session (non-blocking for UI responsiveness)

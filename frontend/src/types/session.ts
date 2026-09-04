@@ -103,6 +103,7 @@ export interface Session {
   baseCommit?: string;
   baseBranch?: string;
   activateOnCreate?: boolean;
+  createDefaultTerminalOnCreate?: boolean;
 }
 
 export interface GitStatus {

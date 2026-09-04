@@ -31,6 +31,7 @@ export interface Session {
   baseBranch?: string;
   pr_renamed?: boolean;
   activateOnCreate?: boolean;
+  createDefaultTerminalOnCreate?: boolean;
 }
 
 export interface GitStatus {
