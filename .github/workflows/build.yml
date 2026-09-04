@@ -124,8 +124,9 @@ jobs:
     permissions:
       contents: write
     steps:
+    - uses: actions/checkout@v7
     - name: Publish GitHub Release
-      run: gh release edit "$RELEASE_TAG" --repo "${{ github.repository }}" --draft=false --latest
+      run: bash scripts/publish-github-release.sh "${{ github.repository }}" "$RELEASE_TAG"
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
