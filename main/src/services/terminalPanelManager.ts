@@ -1757,8 +1757,12 @@ export class TerminalPanelManager {
       return;
     }
 
-    // Save state before destroying
-    this.saveTerminalState(panelId);
+    // Save state before destroying. `saveTerminalState` is async, so a
+    // surrounding synchronous `try` could never observe its rejection — and
+    // `panelManager.updatePanel` writes to SQLite, which can reject.
+    this.saveTerminalState(panelId).catch((error) => {
+      console.error(`[TerminalPanelManager] Failed to save state for ${panelId}:`, error);
+    });
 
     // Clear timers
     if (terminal.outputFlushTimer) {
@@ -1997,9 +2001,18 @@ export class TerminalPanelManager {
 
   destroyAllTerminals(): void {
     for (const [panelId, terminal] of this.terminals) {
+      // Outer guard: nothing in one terminal's teardown may abort the loop.
+      // That failure is wider than the one this method is fixing — it would
+      // leave every later PTY unkilled and skip the `clear()` calls below,
+      // and the caller in `index.ts` hard-exits immediately afterwards.
       try {
-        // Save state before killing
-        this.saveTerminalState(panelId);
+        // Save state before killing. `saveTerminalState` is async, so no
+        // synchronous `try` can observe its rejection; hence the explicit
+        // `.catch`. `panelManager.updatePanel` writes to SQLite mid-shutdown
+        // and can reject.
+        this.saveTerminalState(panelId).catch((error) => {
+          console.error(`[TerminalPanelManager] Failed to save state for ${panelId}:`, error);
+        });
 
         // Clear timers
         if (terminal.outputFlushTimer) {
@@ -2007,12 +2020,33 @@ export class TerminalPanelManager {
           terminal.outputFlushTimer = null;
         }
         disposeFlowControlRecord(terminal.flowControl);
-        this.flushOutputBuffer(terminal);
-        terminal.screenEmulator?.dispose();
 
-        terminal.pty.kill();
+        // Inner guards: each step is caught on its own so a failure in one
+        // cannot skip `pty.kill()`. The event-sink fanout rethrows its first
+        // subscriber error and `dispose()` serializes through a third-party
+        // addon, so either can throw. Under a single shared `try` a throwing
+        // subscriber skipped the kill, and `this.terminals.clear()` below then
+        // dropped the last handle to that PTY — orphaning a shell on the quit
+        // path with nothing left able to reclaim it.
+        try {
+          this.flushOutputBuffer(terminal);
+        } catch (error) {
+          console.warn(`[TerminalPanelManager] Final output flush failed for ${panelId}:`, error);
+        }
+
+        try {
+          terminal.screenEmulator?.dispose();
+        } catch (error) {
+          console.warn(`[TerminalPanelManager] Emulator dispose failed for ${panelId}:`, error);
+        }
+
+        try {
+          terminal.pty.kill();
+        } catch (error) {
+          console.error(`[TerminalPanelManager] Error killing terminal ${panelId}:`, error);
+        }
       } catch (error) {
-        console.error(`[TerminalPanelManager] Error killing terminal ${panelId}:`, error);
+        console.error(`[TerminalPanelManager] Error tearing down terminal ${panelId}:`, error);
       }
     }
 
