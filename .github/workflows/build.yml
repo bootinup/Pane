@@ -333,7 +333,7 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   notify-website:
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || inputs.publish == true
     needs: [checksums]
     runs-on: ubuntu-latest
     steps:
