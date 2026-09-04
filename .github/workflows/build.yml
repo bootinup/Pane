@@ -73,7 +73,7 @@ jobs:
     - name: Verify release target
       if: github.ref_type == 'tag' || inputs.publish == true
       run: |
-        expected_tag="v$(node -p \"require('./package.json').version\")"
+        expected_tag="v$(node -p 'require("./package.json").version')"
         test "$RELEASE_TAG" = "$expected_tag"
         git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG"
 
