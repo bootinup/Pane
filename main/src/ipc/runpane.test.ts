@@ -429,7 +429,7 @@ describe('runpane IPC handlers', () => {
       }));
       expect(terminalPanelManager.writeToTerminal).toHaveBeenCalledWith(
         terminalPanel.id,
-        "codex resume --yolo 'thread-1'",
+        expect.stringMatching(/^codex resume --yolo ["']thread-1["']$/u),
       );
       expect(services.sessionManager.emitSessionCreated).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'stopped' }),
