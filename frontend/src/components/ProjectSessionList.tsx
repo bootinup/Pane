@@ -605,7 +605,7 @@ function SessionRowContent({
 }) {
   const title = displayName || gs?.prTitle || session.name || 'Untitled';
   const prNumber = gs?.prNumber;
-  const showMetadata = Boolean(prNumber || hasDiff);
+  const showMetadata = Boolean(prNumber || hasDiff || session.worktreeOwnership === 'external');
 
   if (rowLayout === 'single') {
     return (
@@ -631,6 +631,7 @@ function SessionRowContent({
               </span>
             )}
             {prNumber && <span className="text-text-tertiary">#{prNumber}</span>}
+            {session.worktreeOwnership === 'external' && <span className="text-text-tertiary">External</span>}
           </span>
         )}
       </div>
@@ -662,6 +663,9 @@ function SessionRowContent({
                 <span className="text-status-success">+{adds}</span>
                 <span className="text-status-error">-{dels}</span>
               </>
+            )}
+            {session.worktreeOwnership === 'external' && (
+              <span className="text-text-tertiary">External</span>
             )}
           </span>
         )}

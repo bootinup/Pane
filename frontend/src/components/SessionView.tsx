@@ -2066,7 +2066,7 @@ export const SessionView = memo(() => {
         onClose={() => hook.setShowArchiveConfirm(false)}
         onConfirm={hook.handleConfirmArchive}
         title="Archive Pane"
-        message={`Archive pane "${activeSession?.name}"? This will:\n\n• Move the pane to the archived panes list\n• Preserve all pane history and outputs\n${activeSession?.isMainRepo ? '• Close the active Claude Code connection' : `• Remove the git worktree locally (${activeSession?.worktreePath?.split('/').pop() || 'worktree'})`}`}
+        message={`Archive pane "${activeSession?.name}"? This will:\n\n• Move the pane to the archived panes list\n• Preserve all pane history and outputs\n${activeSession?.isMainRepo ? '• Close the active Claude Code connection' : activeSession?.worktreeOwnership === 'external' ? '• Leave the externally managed worktree untouched' : `• Remove the git worktree locally (${activeSession?.worktreePath?.split('/').pop() || 'worktree'})`}`}
         confirmText="Archive"
         variant="warning"
         icon={<Archive className="w-6 h-6 text-amber-500 flex-shrink-0" />}

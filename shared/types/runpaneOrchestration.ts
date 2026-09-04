@@ -205,6 +205,28 @@ export interface RunpanePaneCreateRequest {
   source?: RunpanePanelCreateSource;
 }
 
+export interface RunpanePaneAdoptItem {
+  path: string;
+  name: string;
+  baseBranch?: string;
+  folder?: string;
+  pinned?: boolean;
+  tool: RunpaneToolSpec;
+  resume?: string;
+  launch?: boolean;
+}
+
+export interface RunpanePaneAdoptRequest {
+  repo: RunpaneRepoSelector;
+  panes: RunpanePaneAdoptItem[];
+  dryRun?: boolean;
+  noFocus?: boolean;
+  focus?: boolean;
+  source?: RunpanePanelCreateSource;
+}
+
+export type RunpanePaneAdoptResult = RunpanePaneCreateResult;
+
 export interface RunpaneErrorPayload {
   message: string;
   code?: string;
@@ -319,6 +341,7 @@ export interface RunpanePaneSummary {
   createdAt?: string;
   lastActivity?: string;
   archived?: boolean;
+  ownership: 'pane' | 'external';
 }
 
 export interface RunpanePaneListRequest {

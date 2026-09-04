@@ -37,6 +37,8 @@ import type {
   RunpanePaneArchiveResult,
   RunpanePaneArchiveSafetyCheck,
   RunpanePaneArchiveSuccessResult,
+  RunpanePaneAdoptRequest,
+  RunpanePaneAdoptResult,
   RunpanePaneCostRequest,
   RunpanePaneCostResult,
   RunpanePaneListRequest,
@@ -108,6 +110,7 @@ const RUNPANE_CHANNELS = [
   'runpane:panes:list',
   'runpane:panes:cost',
   'runpane:panes:create',
+  'runpane:panes:adopt',
   'runpane:panes:pin',
   'runpane:panes:rename',
   'runpane:panes:archive',
@@ -143,6 +146,7 @@ const DEFAULT_WORKSPACE_WAIT_LIMIT = 256;
 const WORKSPACE_CONSUMER_PATTERN = /^[A-Za-z0-9._-]{1,64}$/u;
 const MUTATING_RUNPANE_ACTIONS = new Set([
   'panes:create',
+  'panes:adopt',
   'panes:archive',
   'panes:pin',
   'panes:rename',
@@ -465,6 +469,95 @@ export function registerRunpaneHandlers(
     }, result => ({ repoId: result.repo.id, resultCount: result.items.length }));
   });
 
+  commandRegistry.register('runpane:panes:adopt', async (request: PaneCommandValue): Promise<RunpanePaneAdoptResult> => {
+    return withRunpaneAction(services, 'panes:adopt', {}, async () => {
+      const normalized = parsePaneAdoptRequest(request);
+      const repo = resolveRepoSelector(databaseService.getAllProjects(), normalized.repo);
+      const repoSummary = projectToRepoSummary(repo, sessionManager.getSessionsForProject(repo.id).length);
+      const items: RunpanePaneCreateResultItem[] = [];
+
+      for (const [index, item] of normalized.panes.entries()) {
+        try {
+          const worktreePath = await validateAdoptedWorktree(services, repo, item.path);
+          const existing = databaseService.getSessionByWorktreePath(worktreePath);
+          if (existing) {
+            throw new Error(`Worktree path is already registered by pane "${existing.name}" (${existing.id})`);
+          }
+          const tool = resolveToolSpec(item.tool, new PathResolver(repo).environment);
+          if (normalized.dryRun) {
+            items.push({ ok: true, index, name: item.name, pinned: item.pinned !== false, worktreePath, tool: describeTool(tool) });
+            continue;
+          }
+
+          const session = await sessionManager.createSession(
+            item.name,
+            worktreePath,
+            '',
+            path.basename(worktreePath),
+            'ignore',
+            repo.id,
+            false,
+            item.folder
+              ? resolveOrCreateAdoptFolder(databaseService, repo.id, item.folder)
+              : undefined,
+            'none',
+            undefined,
+            item.baseBranch,
+            item.pinned !== false,
+            { worktreeOwnership: 'external' },
+          );
+          await sessionManager.updateSession(session.id, { status: 'stopped' });
+          await Promise.all([
+            panelManager.ensureExplorerPanel(session.id),
+            panelManager.ensureDiffPanel(session.id),
+          ]);
+          sessionManager.emitSessionCreated(session, { activateOnCreate: normalized.focus === true });
+
+          const resumeCommand = item.resume && tool.agent
+            ? buildAdoptResumeCommand(tool.agent, item.resume)
+            : tool.command;
+          const initialState: TerminalPanelState = {
+            initialCommand: item.launch ? resumeCommand : undefined,
+            agentType: tool.agent,
+            agentSessionId: item.resume,
+            hasClaudeSessionId: tool.agent === 'claude' && Boolean(item.resume),
+            isCliPanel: Boolean(tool.agent),
+          };
+          const panel = await panelManager.createPanel({
+            sessionId: session.id,
+            type: 'terminal',
+            title: tool.title,
+            initialState,
+            activate: normalized.focus === true,
+          });
+          const context = sessionManager.getProjectContext(session.id);
+          await terminalPanelManager.initializeTerminal(panel, worktreePath, context?.commandRunner.wslContext ?? null);
+          if (!item.launch) {
+            terminalPanelManager.writeToTerminal(panel.id, resumeCommand);
+          }
+          items.push({
+            ok: true,
+            index,
+            name: item.name,
+            pinned: item.pinned !== false,
+            sessionId: session.id,
+            paneId: session.id,
+            panelId: panel.id,
+            worktreePath,
+            tool: describeTool(tool),
+            active: Boolean(panel.state.isActive),
+            focused: Boolean(panel.state.isActive),
+            nextCommand: panelOutputCommand(panel.id),
+          });
+        } catch (error) {
+          items.push(createFailureItem(index, item, error, undefined, item.path));
+        }
+      }
+
+      return { ok: items.every(item => item.ok), repo: repoSummary, items };
+    }, result => ({ repoId: result.repo.id, resultCount: result.items.length }));
+  });
+
   commandRegistry.register('runpane:panes:archive', async (request: PaneCommandValue): Promise<RunpanePaneArchiveResult> => {
     return withRunpaneAction(services, 'panes:archive', {}, async () => {
       const normalized = parsePaneArchiveRequest(request);
@@ -474,7 +567,9 @@ export function registerRunpaneHandlers(
         throw new Error(`Pane ${normalized.paneId} is already archived`);
       }
 
-      const worktreeCleanupApplicable = Boolean(pane.projectId) && !pane.isMainRepo;
+      const worktreeCleanupApplicable = Boolean(pane.projectId)
+        && !pane.isMainRepo
+        && pane.worktreeOwnership !== 'external';
       const safetyCheck = worktreeCleanupApplicable
         ? await computeArchiveSafety(services, pane)
         : { performed: false };
@@ -969,6 +1064,7 @@ function sessionToPaneSummary(session: Session, project: Project): RunpanePaneSu
     createdAt: toIsoString(session.createdAt),
     lastActivity: toIsoString(session.lastActivity),
     archived: session.archived || undefined,
+    ownership: session.worktreeOwnership ?? 'pane',
   };
 }
 
@@ -2169,6 +2265,97 @@ function parsePaneCreateRequest(value: PaneCommandValue): RunpanePaneCreateReque
     focus: optionalBoolean(value.focus),
     source: value.source === 'user' || value.source === 'agent' ? value.source : undefined,
   };
+}
+
+function parsePaneAdoptRequest(value: PaneCommandValue): RunpanePaneAdoptRequest {
+  if (!isRecord(value)) throw new Error('Pane adopt request must be an object');
+  if (!Array.isArray(value.panes) || value.panes.length === 0) {
+    throw new Error('Pane adopt request must include at least one pane');
+  }
+  if (value.noFocus === true && value.focus === true) {
+    throw new Error('Pane adopt request cannot include both noFocus and focus');
+  }
+  return {
+    repo: parseRepoSelector(value.repo),
+    panes: value.panes.map((entry, index) => {
+      if (!isRecord(entry)) throw new Error(`Pane adopt item ${index} must be an object`);
+      const worktreePath = optionalString(entry.path)?.trim();
+      const name = optionalString(entry.name)?.trim();
+      if (!worktreePath) throw new Error(`Pane adopt item ${index} must include path`);
+      if (!name) throw new Error(`Pane adopt item ${index} must include name`);
+      return {
+        path: worktreePath,
+        name,
+        baseBranch: optionalString(entry.baseBranch),
+        folder: optionalString(entry.folder),
+        pinned: optionalBoolean(entry.pinned),
+        tool: parseRunpaneToolSpec(entry.tool, `Pane adopt item ${index}`),
+        resume: optionalString(entry.resume),
+        launch: optionalBoolean(entry.launch),
+      };
+    }),
+    dryRun: optionalBoolean(value.dryRun),
+    noFocus: optionalBoolean(value.noFocus),
+    focus: optionalBoolean(value.focus),
+    source: value.source === 'user' || value.source === 'agent' ? value.source : undefined,
+  };
+}
+
+async function validateAdoptedWorktree(
+  services: AppServices,
+  repo: Project,
+  requestedPath: string,
+): Promise<string> {
+  const context = services.sessionManager.getProjectContextByProjectId(repo.id);
+  if (!context) throw new Error(`Project context is unavailable for ${repo.name}`);
+  const filesystemPath = context.pathResolver.toFileSystem(requestedPath);
+  let canonicalPath: string;
+  try {
+    canonicalPath = fs.realpathSync(filesystemPath);
+  } catch {
+    throw new Error(`Adopt path does not exist: ${requestedPath}`);
+  }
+  const worktrees = await services.worktreeManager.listWorktrees(repo.path, context.commandRunner);
+  const registeredPaths = worktrees.flatMap(entry => {
+    try {
+      return [fs.realpathSync(context.pathResolver.toFileSystem(entry.path))];
+    } catch {
+      return [];
+    }
+  });
+  if (!registeredPaths.includes(canonicalPath)) {
+    throw new Error(`Adopt path is not a git worktree of the selected repository: ${requestedPath}`);
+  }
+
+  const candidateCommon = await resolveGitCommonDirectory(canonicalPath, context.commandRunner);
+  const repoCommon = await resolveGitCommonDirectory(repo.path, context.commandRunner);
+  if (candidateCommon !== repoCommon) {
+    throw new Error(`Adopt path belongs to a different git repository: ${requestedPath}`);
+  }
+  return canonicalPath;
+}
+
+async function resolveGitCommonDirectory(directory: string, commandRunner: CommandRunner): Promise<string> {
+  const { stdout } = await commandRunner.execAsync('git rev-parse --git-common-dir', directory);
+  const common = stdout.trim();
+  return fs.realpathSync(path.resolve(directory, common));
+}
+
+function buildAdoptResumeCommand(agent: RunpaneAgentId, sessionId: string): string {
+  const id = escapeShellArg(sessionId);
+  if (agent === 'claude') return `claude --resume ${id} --dangerously-skip-permissions`;
+  if (agent === 'codex') return `codex resume --yolo ${id}`;
+  return `cursor-agent --force --trust --resume ${id}`;
+}
+
+function resolveOrCreateAdoptFolder(
+  databaseService: AppServices['databaseService'],
+  projectId: number,
+  folderName: string,
+): string {
+  const existing = databaseService.getFoldersForProject(projectId)
+    .find(folder => folder.name === folderName && !folder.parent_folder_id);
+  return existing?.id ?? databaseService.createFolder(folderName, projectId).id;
 }
 
 function parsePanelListRequest(value: PaneCommandValue): RunpanePanelListRequest {

@@ -80,6 +80,7 @@ type DatabaseSession = {
   worktree_path?: string | null;
   project_id?: number | null;
   is_main_repo?: boolean | number | null;
+  worktree_ownership?: 'pane' | 'external' | null;
   created_at?: string | null;
 };
 
@@ -119,7 +120,7 @@ export function registerSessionHandlers(
       const worktreeName = dbSession.worktree_name || '';
       const projectId = dbSession.project_id;
       const worktreePath = dbSession.worktree_path || '';
-      if (worktreeName && projectId && !dbSession.is_main_repo && worktreePath) {
+      if (worktreeName && projectId && !dbSession.is_main_repo && dbSession.worktree_ownership !== 'external' && worktreePath) {
         const project = databaseService.getProject(projectId);
         const ctx = sessionManager.getProjectContextByProjectId(projectId);
         if (project && ctx) {
@@ -427,7 +428,7 @@ export function registerSessionHandlers(
         }
 
         // Clean up the worktree if session has one (but not for main repo sessions)
-        if (dbSession.worktree_name && dbSession.project_id && !dbSession.is_main_repo) {
+        if (dbSession.worktree_name && dbSession.project_id && !dbSession.is_main_repo && dbSession.worktree_ownership !== 'external') {
           const project = databaseService.getProject(dbSession.project_id);
           if (project) {
             const ctx = sessionManager.getProjectContextByProjectId(dbSession.project_id);
@@ -575,7 +576,7 @@ export function registerSessionHandlers(
       };
 
       // Queue the cleanup task if we have worktree cleanup to do
-      if (dbSession.worktree_name && dbSession.project_id && !dbSession.is_main_repo) {
+      if (dbSession.worktree_name && dbSession.project_id && !dbSession.is_main_repo && dbSession.worktree_ownership !== 'external') {
         const project = databaseService.getProject(dbSession.project_id);
         if (project && archiveProgressManager) {
           console.log(`[ArchiveCleanup] archive_queued sessionId=${sessionId} sessionName=${JSON.stringify(dbSession.name)} worktreeName=${JSON.stringify(dbSession.worktree_name)} projectName=${JSON.stringify(project.name)}`);
@@ -1601,7 +1602,7 @@ export function registerSessionHandlers(
       // `worktree_path` dangling and every panel spawn fails with ENOENT.
       // Recreate the worktree before un-archiving; if that fails, leave the
       // session archived and report why.
-      if (dbSession.worktree_name && dbSession.project_id && !dbSession.is_main_repo && !existsSync(dbSession.worktree_path)) {
+      if (dbSession.worktree_name && dbSession.project_id && !dbSession.is_main_repo && dbSession.worktree_ownership !== 'external' && !existsSync(dbSession.worktree_path)) {
         const project = databaseService.getProject(dbSession.project_id);
         const ctx = project ? sessionManager.getProjectContextByProjectId(dbSession.project_id) : null;
         if (!project || !ctx) {
