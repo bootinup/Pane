@@ -24,7 +24,8 @@
       "electron-winstaller"
     ],
     "overrides": {
-      "prebuild-install>node-abi": "^4.33.0"
+      "prebuild-install>node-abi": "^4.33.0",
+      "d3-sankey>d3-array": "^3.2.0"
     }
   },
   "scripts": {
